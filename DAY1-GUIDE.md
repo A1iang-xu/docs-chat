@@ -11,7 +11,6 @@
 
 ```python
 """DeepSeek API 封装 —— 支持流式调用、指数退避重试、Token 用量记录"""
-import time
 import logging
 from typing import AsyncGenerator, Optional
 from openai import AsyncOpenAI
@@ -64,7 +63,6 @@ class LLMService:
                     max_tokens=self.max_tokens,
                     temperature=self.temperature,
                     stream=True,
-                    stream_options={"include_usage": True},
                 )
 
                 async for chunk in stream:
@@ -133,7 +131,6 @@ llm_service = LLMService()
 
 ```python
 """对话 API —— SSE 流式端点"""
-import json
 import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -242,6 +239,10 @@ if __name__ == "__main__":
 
 ```powershell
 cd E:\docs-chat\backend
+
+# 激活虚拟环境
+.\.venv\Scripts\Activate.ps1
+
 # 确保 .env 已配置 DEEPSEEK_API_KEY
 
 # 启动后端
@@ -251,12 +252,17 @@ uvicorn app.main:app --reload --port 8000
 打开另一个终端，测试流式端点：
 
 ```powershell
-# 测试流式对话（PowerShell）
-$body = '{"conversation_id":"test","content":"你好，请用三句话介绍你自己"}'
-Invoke-WebRequest -Uri http://localhost:8000/chat/stream -Method POST -Body $body -ContentType "application/json"
+cd E:\docs-chat\backend
+.\.venv\Scripts\Activate.ps1
+
+# 测试流式对话（PowerShell 中使用 curl.exe）
+curl.exe -s -N -X POST http://localhost:8000/chat/stream `
+  -H "Content-Type: application/json" `
+  -d "{\"conversation_id\":\"test\",\"content\":\"你好，请用三句话介绍你自己\"}"
 ```
 
-如果看到逐 token 返回的 SSE 事件流，第一部分完成。
+> **注意**：PowerShell 的 `Invoke-WebRequest` 无法正确处理 SSE 流式响应，
+> 请使用 `curl.exe`（Windows 10 1803+ 自带）测试。如果看到逐 token 返回的 SSE 事件流，第一部分完成。
 
 ---
 

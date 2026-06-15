@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { useConversationStore } from '@/stores/conversation'
-
-const conversationStore = useConversationStore()
+import ChatView from '@/views/ChatView.vue'
 </script>
 
 <template>
-  <div class="app">
-    <h1>DocsChat</h1>
-    <p>RAG 智能对话系统 — 准备就绪</p>
-    <p class="muted">Day 1 将实现完整的流式对话功能</p>
-  </div>
+  <ChatView />
 </template>
 
 <style>
@@ -21,6 +15,7 @@ const conversationStore = useConversationStore()
   --rule: #30363d;
   --accent: #58a6ff;
   --accent2: #3fb950;
+  --danger: #f85149;
 }
 
 *,
@@ -32,30 +27,27 @@ const conversationStore = useConversationStore()
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   background: var(--bg);
   color: var(--ink);
   min-height: 100vh;
+  overflow: hidden;
 }
 
-.app {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  text-align: center;
+::-webkit-scrollbar {
+  width: 6px;
 }
 
-h1 {
-  font-size: 2.5rem;
-  margin-bottom: 0.5rem;
-  color: var(--accent);
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.muted {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-top: 0.5rem;
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 </style>

@@ -1,5 +1,4 @@
 """DeepSeek API 封装 —— 支持流式调用、指数退避重试、Token 用量记录"""
-import time
 import logging
 from typing import AsyncGenerator, Optional
 from openai import AsyncOpenAI
@@ -52,7 +51,6 @@ class LLMService:
                     max_tokens=self.max_tokens,
                     temperature=self.temperature,
                     stream=True,
-                    stream_options={"include_usage": True},
                 )
 
                 async for chunk in stream:

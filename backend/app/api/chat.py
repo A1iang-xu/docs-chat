@@ -1,5 +1,4 @@
 """对话 API —— SSE 流式端点"""
-import json
 import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
