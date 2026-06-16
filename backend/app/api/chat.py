@@ -1,39 +1,56 @@
-"""对话 API —— SSE 流式端点"""
+"""对话 API —— 支持普通对话和 RAG 对话"""
+import json
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from app.models.schemas import MessageCreate, SSEEvent
 from app.services.llm_service import llm_service
+from app.services.rag_service import rag_service
+from app.services.vector_store import vector_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("/stream")
-async def chat_stream(body: MessageCreate):
+async def chat_stream(body: MessageCreate, rag: bool = Query(default=True)):
     """
     SSE 流式对话端点。
 
-    前端通过 EventSource 或 fetch + ReadableStream 消费此端点。
-    事件格式：
-        data: {"event":"token","data":"你"}
-        data: {"event":"token","data":"好"}
+    Args:
+        body: 消息内容
+        rag: 是否启用 RAG 检索（默认开启）
+
+    SSE 事件格式：
+        data: {"event":"token","data":"文本片段"}
         data: {"event":"source","data":"[{\"index\":1,\"content\":\"...\"}]"}
         data: {"event":"done","data":""}
         data: {"event":"error","data":"错误信息"}
     """
     try:
-        messages = [{"role": "user", "content": body.content}]
-
         async def event_generator():
             try:
-                async for token in llm_service.chat_stream(messages):
-                    event = SSEEvent(event="token", data=token)
-                    yield f"data: {event.model_dump_json()}\n\n"
+                if rag and vector_store.get_chunk_count() > 0:
+                    # ── RAG 模式 ──
+                    async for chunk in rag_service.chat_stream(query=body.content):
+                        if chunk["type"] == "source":
+                            event = SSEEvent(event="source", data=chunk["data"])
+                            yield f"data: {event.model_dump_json()}\n\n"
+                        elif chunk["type"] == "token":
+                            event = SSEEvent(event="token", data=chunk["data"])
+                            yield f"data: {event.model_dump_json()}\n\n"
+                        elif chunk["type"] == "done":
+                            done_event = SSEEvent(event="done", data="")
+                            yield f"data: {done_event.model_dump_json()}\n\n"
+                else:
+                    # ── 普通对话模式（无知识库时） ──
+                    messages = [{"role": "user", "content": body.content}]
+                    async for token in llm_service.chat_stream(messages):
+                        event = SSEEvent(event="token", data=token)
+                        yield f"data: {event.model_dump_json()}\n\n"
 
-                # 发送完成信号
-                done_event = SSEEvent(event="done", data="")
-                yield f"data: {done_event.model_dump_json()}\n\n"
+                    done_event = SSEEvent(event="done", data="")
+                    yield f"data: {done_event.model_dump_json()}\n\n"
 
             except Exception as e:
                 logger.error(f"流式对话异常: {e}")
@@ -46,7 +63,7 @@ async def chat_stream(body: MessageCreate):
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+                "X-Accel-Buffering": "no",
             },
         )
 

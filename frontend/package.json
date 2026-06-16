@@ -18,6 +18,7 @@
     "vue-virtual-scroller": "^3.0.4"
   },
   "devDependencies": {
+    "@types/marked": "^5.0.2",
     "@types/node": "^24.12.3",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",

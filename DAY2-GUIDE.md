@@ -192,7 +192,7 @@ import logging
 from typing import List, Optional
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from langchain_openai import OpenAIEmbeddings
+from chromadb.utils import embedding_functions
 from app.core.config import settings
 from app.services.document_service import DocumentChunk
 
@@ -209,26 +209,25 @@ class VectorStoreService:
             path=settings.CHROMA_PERSIST_DIR,
             settings=ChromaSettings(anonymized_telemetry=False),
         )
-        self.embeddings = OpenAIEmbeddings(
-            model=settings.EMBEDDING_MODEL,
-            api_key=settings.DEEPSEEK_API_KEY,
-            base_url=settings.DEEPSEEK_BASE_URL,
-        )
+        # 使用 ChromaDB 内置的 ONNX Embedding 函数（轻量、无需 torch）
+        self.embedding_function = embedding_functions.DefaultEmbeddingFunction()
         self._collection = None
 
     @property
     def collection(self):
-        """懒加载 collection"""
+        """懒加载 collection，挂载 embedding_function"""
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=self.COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine"},
+                embedding_function=self.embedding_function,
             )
         return self._collection
 
     def add_chunks(self, chunks: List[DocumentChunk]) -> int:
         """
         将文档分块向量化并存入 ChromaDB。
+        Embedding 由 ChromaDB 内置的 embedding_function 自动处理。
 
         Args:
             chunks: 文档分块列表
@@ -239,14 +238,9 @@ class VectorStoreService:
         if not chunks:
             return 0
 
-        # ── 1. 提取文本 + 生成 Embedding ──
-        texts = [chunk.content for chunk in chunks]
-        logger.info(f"开始向量化 {len(texts)} 个文本块 (模型: {settings.EMBEDDING_MODEL})")
-        vectors = self.embeddings.embed_documents(texts)
-        logger.info("向量化完成")
-
-        # ── 2. 准备 ChromaDB 写入数据 ──
+        # ── 准备 ChromaDB 写入数据 ──
         ids = [chunk.chunk_id for chunk in chunks]
+        texts = [chunk.content for chunk in chunks]
         metadatas = [
             {
                 "document_name": chunk.document_name,
@@ -257,10 +251,11 @@ class VectorStoreService:
             for chunk in chunks
         ]
 
-        # ── 3. 批量写入 ──
+        logger.info(f"开始向量化 {len(texts)} 个文本块 (模型: {settings.EMBEDDING_MODEL})")
+
+        # ── 批量写入（ChromaDB 自动调用 embedding_function 生成向量）──
         self.collection.add(
             ids=ids,
-            embeddings=vectors,
             documents=texts,
             metadatas=metadatas,
         )
@@ -285,12 +280,9 @@ class VectorStoreService:
         """
         top_k = top_k or settings.RETRIEVAL_TOP_K
 
-        # 将查询向量化
-        query_vector = self.embeddings.embed_query(query)
-
-        # 检索
+        # ChromaDB 自动将 query_texts 向量化并检索
         results = self.collection.query(
-            query_embeddings=[query_vector],
+            query_texts=[query],
             n_results=top_k,
             include=["metadatas", "distances"],
         )
@@ -612,20 +604,30 @@ if __name__ == "__main__":
 
 ```powershell
 cd E:\docs-chat\backend
+.\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload --port 8000
 ```
 
 打开另一个终端：
 
 ```powershell
+cd E:\docs-chat\backend
+.\.venv\Scripts\Activate.ps1
+
 # 测试文档上传（准备一份 PDF 测试文件）
-$filePath = "C:\path\to\your\test.pdf"  # 替换为你的 PDF 路径
-$form = @{ file = Get-Item $filePath }
-Invoke-RestMethod -Uri http://localhost:8000/documents/upload -Method POST -Form $form
+# 方法 1：使用 curl.exe（推荐，Windows 10 1803+ 自带）
+curl.exe -X POST http://localhost:8000/documents/upload `
+  -F "file=@C:\Users\20886\Desktop\Vue3快速上手_笔记.pdf"
+
+# 方法 2：使用 Python
+python -c "import requests; r = requests.post('http://localhost:8000/documents/upload', files={'file': open(r'C:\path\to\your\test.pdf', 'rb')}); print(r.json())"
 
 # 检查向量库状态
-Invoke-RestMethod -Uri http://localhost:8000/documents/status
+curl.exe http://localhost:8000/documents/status
 ```
+
+> **注意**：PowerShell 5.x 的 `Invoke-RestMethod` 不支持 `-Form` 参数（该参数需要 PowerShell 7+），
+> 请使用 `curl.exe` 或 Python 测试。首次上传时会自动下载 Embedding 模型（约 80MB），请耐心等待。
 
 如果返回 `{"chunk_count": N, "has_bm25_index": true}`，说明文档解析、向量化、BM25 索引全部成功。
 
@@ -828,9 +830,13 @@ async def chat_stream(body: MessageCreate, rag: bool = Query(default=True)):
 
 ```python
 # ── Embedding ──
-EMBEDDING_MODEL: str = "text-embedding-3-small"  # OpenAI 兼容接口
-EMBEDDING_DIM: int = 1536
+EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # ChromaDB 内置 ONNX Embedding 模型
+EMBEDDING_DIM: int = 384
 ```
+
+> **说明**：Embedding 使用 ChromaDB 内置的 ONNX `SentenceTransformerEmbeddingFunction`，
+> 不依赖 torch，无需 API Key，轻量且稳定。
+> 首次运行时会自动下载模型（约 80MB），缓存于 HuggingFace 本地目录。
 
 ---
 
@@ -841,16 +847,17 @@ EMBEDDING_DIM: int = 1536
 ```powershell
 # 终端 1：启动后端
 cd E:\docs-chat\backend
+.\.venv\Scripts\Activate.ps1
 uvicorn app.main:app --reload --port 8000
 
 # 终端 2：上传测试 PDF
-$filePath = "C:\path\to\your\test.pdf"
-$form = @{ file = Get-Item $filePath }
-Invoke-RestMethod -Uri http://localhost:8000/documents/upload -Method POST -Form $form
+cd E:\docs-chat\backend
+.\.venv\Scripts\Activate.ps1
+curl.exe -X POST http://localhost:8000/documents/upload `
+  -F "file=@C:\Users\20886\Desktop\Vue3快速上手_笔记.pdf"
 
-# 终端 3：测试 RAG 对话
-$body = '{"conversation_id":"test","content":"这篇文档主要讲了什么？"}'
-Invoke-WebRequest -Uri http://localhost:8000/chat/stream -Method POST -Body $body -ContentType "application/json"
+# 终端cmd 3：测试 RAG 对话
+curl.exe -X POST http://localhost:8000/chat/stream -H "Content-Type: application/json" -d "{\"conversation_id\":\"test\",\"content\":\"这篇文档主要讲了什么？\"}"
 ```
 
 预期 SSE 事件流：
@@ -869,7 +876,7 @@ data: {"event":"done","data":""}
 
 ```powershell
 cd E:\docs-chat\backend
-python scripts/chunk_experiment.py "C:\path\to\your\test.pdf"
+python scripts/chunk_experiment.py "C:\Users\20886\Desktop\Vue3快速上手_笔记.pdf"
 ```
 
 输出示例：
@@ -917,11 +924,15 @@ npm run dev
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| `embed_documents` 报错 | Embedding API Key 未配置 | 确认 `.env` 中 `DEEPSEEK_API_KEY` 正确 |
+| `Error code: 404` 上传文档时 | Embedding 模型使用了 OpenAI 的 text-embedding-3-small，但 DeepSeek 不提供 Embedding 端点 | 改用本地 HuggingFaceEmbeddings + all-MiniLM-L6-v2 |
+| 首次上传很慢 (>1分钟) | 正从 HuggingFace 下载 Embedding 模型 | 正常现象，首次下载约 80MB，之后会使用缓存 |
+| `embed_documents` 报错 | Embedding API Key 未配置 | 已改用本地模型，无需 API Key |
 | ChromaDB 写入慢 | 首次下载 Embedding 模型 | 正常现象，等待完成 |
 | BM25 检索无结果 | 索引未构建 | 上传文档后确认 `has_bm25_index: true` |
 | RAG 回答不相关 | 分块策略不当 | 调整 `CHUNK_SIZE` 和 `CHUNK_OVERLAP` |
 | 来源角标不显示 | 前端 SSE source 事件未解析 | 检查 `ChatView.vue` 中 `watch(sources, ...)` 逻辑 |
+| PowerShell `-Form` 参数报错 | PowerShell 5.x 不支持 `-Form` | 使用 `curl.exe` 或升级到 PowerShell 7+ |
+| `[WinError 10013]` 端口被占用 | 上次的 uvicorn 进程未正常退出 | `netstat -ano \| findstr ":8000"` 查到 PID 后 `taskkill /F /PID <PID>` |
 
 ---
 

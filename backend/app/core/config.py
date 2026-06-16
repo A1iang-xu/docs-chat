@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     DEEPSEEK_TEMPERATURE: float = 0.7
 
     # ── Embedding ──
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
-    EMBEDDING_DIM: int = 1536
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_DIM: int = 384
 
     # ── 分块策略 ──
     CHUNK_SIZE: int = 512
