@@ -58,6 +58,16 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
 
 
+@router.get("/")
+async def list_documents():
+    """
+    获取已上传的文档列表。
+
+    用于前端页面刷新后恢复文档状态显示。
+    """
+    return vector_store.get_unique_documents()
+
+
 @router.get("/status")
 async def get_status():
     """获取向量库状态"""

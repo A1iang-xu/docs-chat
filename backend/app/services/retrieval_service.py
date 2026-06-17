@@ -45,13 +45,14 @@ class RetrievalService:
         self.bm25_chunks = chunks
         logger.info(f"BM25 索引构建完成: {len(chunks)} 个文档")
 
-    def search(self, query: str, top_k: int | None = None) -> List[dict]:
+    def search(self, query: str, top_k: int | None = None, use_reranker: bool = True) -> List[dict]:
         """
-        混合检索 —— 向量 + BM25 → RRF 融合。
+        混合检索 —— 向量 + BM25 → RRF 融合 → (可选) Reranker 精排。
 
         Args:
             query: 查询文本
             top_k: 最终返回数量
+            use_reranker: 是否使用 Reranker 精排（默认开启）
 
         Returns:
             排序后的检索结果
@@ -67,8 +68,20 @@ class RetrievalService:
         logger.info(f"BM25 检索: {len(bm25_results)} 条结果")
 
         # ── 3. RRF 融合 ──
-        merged = self._rrf_fusion(vector_results, bm25_results, top_k)
+        merged = self._rrf_fusion(vector_results, bm25_results, top_k=top_k * 2)
         logger.info(f"RRF 融合: {len(merged)} 条结果")
+
+        # ── 4. Reranker 精排（可选） ──
+        if use_reranker and merged:
+            try:
+                from app.services.reranker_service import reranker
+                merged = reranker.rerank(query, merged, top_k=top_k)
+                logger.info(f"Reranker 精排: {len(merged)} 条结果")
+            except ImportError:
+                logger.warning("Reranker 模型未安装，跳过精排")
+                merged = merged[:top_k]
+        else:
+            merged = merged[:top_k]
 
         return merged
 

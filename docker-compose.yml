@@ -6,24 +6,39 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - ./backend/uploads:/app/uploads
       - chroma_data:/app/chroma_data
+    env_file:
+      - ./backend/.env
     environment:
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - CHROMA_PERSIST_DIR=/app/chroma_data
+      - UPLOAD_DIR=/app/uploads
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - docschat-net
 
   frontend:
     build: ./frontend
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000
+      - VITE_API_BASE_URL=http://backend:8000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - docschat-net
 
 volumes:
   chroma_data:
+
+networks:
+  docschat-net:
+    driver: bridge

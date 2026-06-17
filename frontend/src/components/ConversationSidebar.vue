@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useConversationStore } from '@/stores/conversation'
 import type { Conversation } from '@/types'
-
+import { ref, onMounted, onUnmounted } from 'vue'
 const conversationStore = useConversationStore()
+const isMobileOpen = ref(false)
+const isMobile = ref(false)
 
 function handleNewChat() {
   conversationStore.createConversation('新对话')
@@ -11,10 +13,25 @@ function handleNewChat() {
 function handleSelect(id: string) {
   conversationStore.setActive(id)
 }
+function checkMobile() {
+  isMobile.value = window.innerWidth < 768
+}
+
+function toggleSidebar() {
+  isMobileOpen.value = !isMobileOpen.value
+}
+onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
+})
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="sidebar" :class="{ 'mobile-open': isMobileOpen, 'mobile-hidden': isMobile && !isMobileOpen }">
     <button class="new-chat-btn" @click="handleNewChat">
       + 新建对话
     </button>
@@ -107,5 +124,37 @@ function handleSelect(id: string) {
   font-size: 0.85rem;
   text-align: center;
   margin-top: 2rem;
+}
+/* 移动端：侧边栏默认隐藏，通过汉堡菜单切换 */
+@media (max-width: 767px) {
+  .sidebar {
+    position: fixed;
+    left: -280px;
+    top: 0;
+    bottom: 0;
+    z-index: 1000;
+    width: 280px;
+    transition: left 0.25s ease;
+    box-shadow: none;
+  }
+
+  .sidebar.mobile-open {
+    left: 0;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+  }
+
+  .sidebar.mobile-hidden {
+    left: -280px;
+  }
+
+  /* 移动端遮罩层 */
+  .sidebar.mobile-open::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    left: 280px;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: -1;
+  }
 }
 </style>

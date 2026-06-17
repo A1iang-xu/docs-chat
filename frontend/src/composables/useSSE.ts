@@ -12,7 +12,7 @@ export interface SSEOptions {
 }
 
 export function useSSE(options: SSEOptions = {}) {
-  const { maxRetries = 3, retryBaseMs = 1000, heartbeatTimeoutMs = 30_000 } = options
+  const { maxRetries = 3, retryBaseMs = 1000, heartbeatTimeoutMs = 120_000 } = options
 
   const content = ref('')
   const sources = ref<SourceCitation[]>([])
@@ -88,6 +88,11 @@ export function useSSE(options: SSEOptions = {}) {
         buffer = lines.pop() || ''
 
         for (const line of lines) {
+          // SSE 注释行（心跳），仅重置心跳计时器
+          if (line.startsWith(':') || line.trim() === '') {
+            continue
+          }
+
           if (line.startsWith('data: ')) {
             try {
               const event: SSEEvent = JSON.parse(line.slice(6))

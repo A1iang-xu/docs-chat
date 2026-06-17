@@ -21,44 +21,61 @@ npm install -D @types/marked
 /**
  * useMarkdown — 将 Markdown 文本渲染为 HTML
  * 支持代码高亮、表格、GFM 语法
+ *
+ * 采用 post-processing 方案而非 marked.use() renderer 覆盖：
+ * marked v18 的 renderer 对象字面量在 use() 中存在兼容性风险，
+ * 后处理方案更稳定且不依赖 marked 内部 API。
  */
-import { marked, type Tokens } from 'marked'
+import { marked } from 'marked'
 import hljs from 'highlight.js'
 
-// ── 配置 marked 渲染器 ──
-const renderer = new marked.Renderer()
+// ── 配置 marked 基础选项 ──
+marked.setOptions({ gfm: true, breaks: true })
 
-// 代码块高亮
-renderer.code = function ({ text, lang }: Tokens.Code): string {
-  const validLang = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-  const highlighted = hljs.highlight(text, { language: validLang }).value
-  return `<pre><code class="hljs language-${validLang}">${highlighted}</code></pre>`
+// ── HTML 实体解码 ──
+function decodeHtml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
 }
-
-// 行内代码
-renderer.codespan = function ({ text }: Tokens.Codespan): string {
-  return `<code class="inline-code">${text}</code>`
-}
-
-// 引用来源角标替换：[1] → <sup class="citation">[1]</sup>
-// 注意：renderer 在 marked 新版本中 token 类型已变化，改用 post-processing
-renderer.text = function (token: Tokens.Text | Tokens.Escape | Tokens.Tag): string {
-  const text = 'text' in token ? token.text : token.raw
-  // 将 Markdown 外的 [N] 替换为带样式的角标（保留已有 HTML）
-  return text.replace(/(?<!<sup class="citation">)\[(\d+)\](?!<\/sup>)/g, '<sup class="citation">[$1]</sup>')
-}
-
-marked.setOptions({
-  renderer,
-  gfm: true,
-  breaks: true,
-})
 
 export function useMarkdown() {
   function render(markdown: string): string {
     if (!markdown) return ''
+
     try {
-      return marked.parse(markdown) as string
+      let html = marked.parse(markdown) as string
+
+      // ── 后处理 1：代码块高亮 ──
+      // marked 默认输出: <pre><code class="language-python">转义后的代码</code></pre>
+      html = html.replace(
+        /<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g,
+        (_, lang, escapedCode) => {
+          const code = decodeHtml(escapedCode)
+          const validLang = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
+          const highlighted = hljs.highlight(code, { language: validLang }).value
+          return `<pre><code class="hljs language-${validLang}">${highlighted}</code></pre>`
+        },
+      )
+
+      // ── 后处理 2：行内代码样式 ──
+      // 注意：只替换不在 <pre> 内的行内 <code>
+      html = html.replace(
+        /(?<!<pre[^>]*>)(?<!<code[^>]*>)<code>([^<]+)<\/code>(?!<\/pre>)/g,
+        '<code class="inline-code">$1</code>',
+      )
+
+      // ── 后处理 3：引用来源角标 [N] → <sup> ──
+      // 避免替换已在 <sup> 内的角标
+      html = html.replace(
+        /(?<!<sup class="citation">)\[(\d+)\](?!<\/sup>)/g,
+        '<sup class="citation">[$1]</sup>',
+      )
+
+      return html
     } catch {
       return markdown
     }
@@ -1042,19 +1059,36 @@ body {
   overflow: hidden;
 }
 
-/* ── 滚动条 ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar {
+  width: 6px;
+}
 
-/* ── highlight.js GitHub Dark 主题适配 ── */
-.hljs { color: #e6edf3; background: #0d1117; }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* ── highlight.js GitHub Dark 主题 ── */
+.hljs {
+  color: #e6edf3;
+  background: #0d1117;
+}
+
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-literal,
 .hljs-section,
-.hljs-link { color: #ff7b72; }
+.hljs-link {
+  color: #ff7b72;
+}
 
 .hljs-string,
 .hljs-title,
@@ -1066,34 +1100,53 @@ body {
 .hljs-addition,
 .hljs-variable,
 .hljs-template-tag,
-.hljs-template-variable { color: #a5d6ff; }
+.hljs-template-variable {
+  color: #a5d6ff;
+}
 
 .hljs-comment,
 .hljs-quote,
 .hljs-deletion,
-.hljs-meta { color: #8b949e; }
+.hljs-meta {
+  color: #8b949e;
+}
 
 .hljs-number,
 .hljs-regexp,
-.hljs-literal,
-.hljs-built_in { color: #79c0ff; }
+.hljs-built_in {
+  color: #79c0ff;
+}
 
 .hljs-function .hljs-title,
 .hljs-title.function_,
 .hljs-title.class_,
 .hljs-attr,
-.hljs-params { color: #d2a8ff; }
+.hljs-params {
+  color: #d2a8ff;
+}
 
-.hljs-class .hljs-title { color: #ffa657; }
+.hljs-class .hljs-title {
+  color: #ffa657;
+}
 
 .hljs-attr,
 .hljs-selector-attr,
 .hljs-selector-class,
-.hljs-selector-pseudo { color: #79c0ff; }
+.hljs-selector-pseudo {
+  color: #79c0ff;
+}
 
-.hljs-tag { color: #7ee787; }
-.hljs-tag .hljs-name { color: #7ee787; }
-.hljs-tag .hljs-attr { color: #79c0ff; }
+.hljs-tag {
+  color: #7ee787;
+}
+
+.hljs-tag .hljs-name {
+  color: #7ee787;
+}
+
+.hljs-tag .hljs-attr {
+  color: #79c0ff;
+}
 
 /* ── 选择文字颜色 ── */
 ::selection {
@@ -1118,9 +1171,10 @@ RAGAS 评估脚本 —— 量化 RAG 系统的检索和生成质量
 
 运行方式:
     cd backend
-    python scripts/evaluate_rag.py
-
-需要先上传文档并准备好评估数据集。
+    python scripts/evaluate_rag.py              # 自动模式：从文档生成问答对
+    python scripts/evaluate_rag.py --manual     # 手动模式：使用预定义的 EVAL_DATASET
+    python scripts/evaluate_rag.py --count 20   # 指定生成 20 组问答对
+    python scripts/evaluate_rag.py --qa-file eval_qa_pairs.json  # 复用已有问答对
 
 评估指标:
 - Context Recall: 检索到的上下文覆盖了多少参考答案
@@ -1135,9 +1189,11 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import argparse
 import json
 import logging
 import asyncio
+import random
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import (
@@ -1154,103 +1210,172 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ── 评估数据集 ──
-# 格式: { "question": "问题", "ground_truth": "参考答案" }
-# 手动构建 10-20 组问答对，用于评估检索和生成质量
+# ── 手动评估数据集（备用） ──
 EVAL_DATASET = [
-    {
-        "question": "这个文档主要讲了什么内容？",
-        "ground_truth": "（手动填写正确答案，基于你的测试文档）",
-    },
-    {
-        "question": "文档中提到了哪些关键概念？",
-        "ground_truth": "（手动填写正确答案）",
-    },
-    # TODO: 补充更多问答对（建议 10-20 组）
+    # 格式: { "question": "问题", "ground_truth": "参考答案" }
+    # 填写后可通过 --manual 模式使用
 ]
 
 
-async def run_evaluation():
+# ═══════════════════════════════════════════════════════════════
+# 自动化问答对生成
+# ═══════════════════════════════════════════════════════════════
+
+QA_GENERATION_PROMPT = """你是一个专业的测试数据生成器。请根据以下文档内容，生成 {count} 个高质量的问答对。
+
+要求：
+1. 问题应覆盖文档的不同方面（概念、细节、关系、结论等），不要重复
+2. 问题应使用自然语言，像真实用户会问的问题
+3. 参考答案应准确、完整，基于文档内容（不要编造）
+4. 每个问题应有明确的答案，可以从文档中直接或间接推导
+
+输出格式（严格 JSON 数组）：
+```json
+[
+  {{"question": "问题1", "ground_truth": "答案1"}},
+  {{"question": "问题2", "ground_truth": "答案2"}}
+]
+```
+
+文档内容：
+{document_text}
+
+请生成 {count} 个问答对："""
+
+
+async def generate_qa_pairs(count: int = 10, sample_chunks: int = 30) -> list[dict]:
+    """使用 LLM 从文档库中自动生成问答对"""
+    # 使用通用查询词采样不同主题的文档块
+    seed_queries = [
+        "概述", "简介", "什么是", "如何", "原因", "方法",
+        "步骤", "特点", "区别", "优势", "应用", "总结",
+        "关键", "重要", "原理", "流程", "核心", "结论",
+    ]
+    sampled_chunks: list[str] = []
+    seen_ids: set[str] = set()
+    for query in seed_queries:
+        if len(sampled_chunks) >= sample_chunks:
+            break
+        results = vector_store.search(query, top_k=3)
+        for r in results:
+            if r["chunk_id"] not in seen_ids and len(sampled_chunks) < sample_chunks:
+                seen_ids.add(r["chunk_id"])
+                sampled_chunks.append(r["content"])
+    if not sampled_chunks:
+        logger.error("无法从向量库中采样文档块，请先上传文档")
+        return []
+    random.shuffle(sampled_chunks)
+    document_text = "\n\n---\n\n".join(
+        f"[片段 {i+1}] {chunk[:800]}" for i, chunk in enumerate(sampled_chunks)
+    )
+    prompt = QA_GENERATION_PROMPT.format(count=count, document_text=document_text)
+    logger.info(f"使用 {len(sampled_chunks)} 个文档片段生成 {count} 个问答对...")
+    response = await llm_service.chat(messages=[{"role": "user", "content": prompt}])
+    json_start = response.find("[")
+    json_end = response.rfind("]") + 1
+    if json_start == -1 or json_end == 0:
+        logger.error("LLM 返回的内容中未找到 JSON 数组")
+        return []
+    return json.loads(response[json_start:json_end])
+
+
+# ═══════════════════════════════════════════════════════════════
+# 评估主流程
+# ═══════════════════════════════════════════════════════════════
+
+async def run_evaluation(qa_pairs: list[dict]):
     """运行 RAGAS 评估"""
-
-    if vector_store.get_chunk_count() == 0:
-        logger.error("向量库为空！请先上传 PDF 文档。")
+    if not qa_pairs:
+        logger.error("没有可用的问答对，评估终止")
         return
-
-    if retrieval_service.bm25 is None:
-        logger.error("BM25 索引未构建！请先上传 PDF 文档。")
-        return
-
-    logger.info(f"开始 RAGAS 评估: {len(EVAL_DATASET)} 组问答对")
-
-    questions = []
-    answers = []
-    contexts_list = []
-    ground_truths = []
-
-    for item in EVAL_DATASET:
-        question = item["question"]
-        ground_truth = item["ground_truth"]
-
-        logger.info(f"评估中: {question}")
-
-        # ── 1. 检索上下文 ──
+    logger.info(f"开始 RAGAS 评估: {len(qa_pairs)} 组问答对")
+    questions, answers, contexts_list, ground_truths = [], [], [], []
+    for item in qa_pairs:
+        question, ground_truth = item["question"], item["ground_truth"]
+        logger.info(f"评估中 [{len(questions)+1}/{len(qa_pairs)}]: {question[:50]}...")
         retrieval_results = retrieval_service.search(question, top_k=5)
         contexts = [r["content"] for r in retrieval_results]
-
-        # ── 2. 生成回答 ──
+        if not contexts:
+            logger.warning("  未检索到相关内容，跳过")
+            continue
         context_text = "\n\n".join(contexts)
-        prompt = f"""基于以下参考文档回答问题。
-参考文档:
-{context_text}
-
-问题: {question}
-
-回答:"""
-
         answer = await llm_service.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": f"基于以下参考文档回答问题。\n参考文档:\n{context_text}\n\n问题: {question}\n\n回答:"}],
         )
-
         questions.append(question)
         answers.append(answer)
         contexts_list.append(contexts)
-        ground_truths.append([ground_truth])  # RAGAS 要求 list of list
-
-    # ── 3. 构建 Dataset 并评估 ──
+        ground_truths.append([ground_truth])
+    if not questions:
+        logger.error("所有问答对均未检索到内容，无法评估")
+        return
     dataset = Dataset.from_dict({
-        "question": questions,
-        "answer": answers,
-        "contexts": contexts_list,
-        "ground_truth": ground_truths,
+        "question": questions, "answer": answers,
+        "contexts": contexts_list, "ground_truth": ground_truths,
     })
-
     logger.info("运行 RAGAS 评估...")
-    result = evaluate(
-        dataset,
-        metrics=[context_recall, faithfulness, answer_relevancy],
-    )
-
-    # ── 4. 输出结果 ──
+    result = evaluate(dataset, metrics=[context_recall, faithfulness, answer_relevancy])
     print("\n" + "=" * 60)
     print("RAGAS 评估结果")
     print("=" * 60)
     for metric, value in result.items():
-        score = round(float(value), 4)
-        print(f"  {metric:.<30} {score:.4f}")
-
-    # 导出为 JSON（用于简历量化数据）
+        print(f"  {metric:.<30} {round(float(value), 4):.4f}")
     output_path = os.path.join(os.path.dirname(__file__), "..", "evaluation_results.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump({k: round(float(v), 4) for k, v in result.items()}, f, ensure_ascii=False, indent=2)
     print(f"\n结果已保存到: {output_path}")
+    qa_path = os.path.join(os.path.dirname(__file__), "..", "eval_qa_pairs.json")
+    with open(qa_path, "w", encoding="utf-8") as f:
+        json.dump(qa_pairs, f, ensure_ascii=False, indent=2)
+    print(f"问答对已保存到: {qa_path}")
     print("=" * 60)
-
     return result
 
 
+# ═══════════════════════════════════════════════════════════════
+# 入口
+# ═══════════════════════════════════════════════════════════════
+
+async def main():
+    parser = argparse.ArgumentParser(description="RAGAS 评估脚本")
+    parser.add_argument("--manual", action="store_true", help="使用手动编写的 EVAL_DATASET")
+    parser.add_argument("--count", type=int, default=10, help="自动生成的问答对数量（默认 10）")
+    parser.add_argument("--qa-file", type=str, default=None, help="从 JSON 文件加载已有问答对")
+    args = parser.parse_args()
+    if vector_store.get_chunk_count() == 0:
+        logger.error("向量库为空！请先上传 PDF 文档。")
+        return
+
+    # ── 重建 BM25 索引（独立进程需要从 ChromaDB 加载数据）──
+    if retrieval_service.bm25 is None:
+        logger.info("正在从向量库重建 BM25 索引...")
+        all_chunks = vector_store.get_all_chunks()
+        if all_chunks:
+            retrieval_service.build_bm25_index(all_chunks)
+            logger.info(f"BM25 索引重建完成: {len(all_chunks)} 个文档块")
+        else:
+            logger.error("无法从向量库获取文档块，请先上传 PDF 文档。")
+            return
+    if args.qa_file:
+        with open(args.qa_file, "r", encoding="utf-8") as f:
+            qa_pairs = json.load(f)
+        logger.info(f"从文件加载 {len(qa_pairs)} 组问答对")
+    elif args.manual:
+        qa_pairs = EVAL_DATASET
+        if not qa_pairs:
+            logger.error("EVAL_DATASET 为空！请在脚本中填写问答对后重试。")
+            return
+    else:
+        logger.info(f"自动生成模式：目标 {args.count} 个问答对")
+        qa_pairs = await generate_qa_pairs(count=args.count)
+    if not qa_pairs:
+        logger.error("未获取到有效问答对，评估终止")
+        return
+    await run_evaluation(qa_pairs)
+
+
 if __name__ == "__main__":
-    asyncio.run(run_evaluation())
+    asyncio.run(main())
 ```
 
 ### 3.2 创建 Reranker 服务 `backend\app\services\reranker_service.py`
@@ -1422,23 +1547,39 @@ python -c "from sentence_transformers import CrossEncoder; print('Reranker OK')"
 | 问题 | 原因 | 解决 |
 |------|------|------|
 | Markdown 不渲染 | `marked` 未安装 | `npm install marked && npm install -D @types/marked` |
-| 代码无高亮 | `highlight.js` 未安装 | `npm install highlight.js` |
+| 代码无高亮 | `highlight.js` 未安装或 CSS 缺失 | `npm install highlight.js` + 确认 App.vue 中有 hljs 主题样式 |
+| 代码高亮不生效 | `marked.use()` renderer 兼容性问题 | 改用 post-processing 方案（正则匹配 `<pre><code>` 后调 hljs） |
 | 来源卡片不显示 | `sources` 数组为空 | 确认已上传文档且检索返回结果 |
+| 心跳超时 | Reranker 首次下载模型耗时长 | 后端已预加载模型 + 心跳间隔 10s + 超时 120s |
 | RAGAS 报 `datasets` 错误 | `datasets` 未安装 | `pip install datasets` |
-| Reranker 下载慢 | 首次下载 ~2.2GB 模型 | 等待完成，或改为 Day 5 再启用 |
+| Reranker 下载慢 | 首次下载 ~2.2GB 模型 | 启动时自动预加载，或改为 Day 5 再启用 |
 | 上传按钮无反应 | 未引入 `DocumentUploader` | 确认 ChatView 中已 import 该组件 |
+| BM25 索引未构建 | evaluate_rag.py 独立进程无 BM25 内存数据 | 脚本已自动从 ChromaDB 重建 BM25 索引 |
 
-### 4.3 RAGAS 评估前置准备
+### 4.3 RAGAS 评估操作指南
 
-在运行评估脚本前，需要手动标注 10-20 组问答对。建议：
+**自动模式（推荐）**：由 LLM 自动从文档生成问答对并评估，无需手动标注。
 
-1. 先上传你的测试 PDF 文档
-2. 手动提出 10-20 个问题
-3. 根据文档内容写出正确答案（ground_truth）
-4. 填入 `evaluate_rag.py` 的 `EVAL_DATASET` 列表
-5. 运行 `python scripts/evaluate_rag.py`
+```powershell
+cd E:\docs-chat\backend
+# 自动生成 10 组问答对并评估（默认）
+python scripts/evaluate_rag.py
 
-输出示例：
+# 生成 20 组问答对
+python scripts/evaluate_rag.py --count 20
+
+# 复用之前生成的问答对
+python scripts/evaluate_rag.py --qa-file eval_qa_pairs.json
+```
+
+**手动模式**：使用预定义的问答对（适合精确控制评估场景）。
+
+```powershell
+# 先在 evaluate_rag.py 的 EVAL_DATASET 中填写问答对
+python scripts/evaluate_rag.py --manual
+```
+
+**输出示例**：
 ```
 ============================================================
 RAGAS 评估结果
@@ -1469,20 +1610,25 @@ RAGAS 评估结果
 docs-chat/
 ├── backend/
 │   ├── app/
+│   │   ├── api/
+│   │   │   └── chat.py                 ← 更新（SSE 心跳 keepalive）
+│   │   ├── main.py                     ← 更新（启动时预加载 Reranker）
 │   │   └── services/
 │   │       ├── retrieval_service.py   ← 更新（加入 Reranker）
+│   │       ├── vector_store.py         ← 更新（新增 get_all_chunks 方法）
 │   │       └── reranker_service.py    ← 新增
 │   └── scripts/
-│       └── evaluate_rag.py            ← 新增
+│       └── evaluate_rag.py            ← 新增（自动化问答生成 + BM25 重建 + 评估）
 └── frontend/
     └── src/
-        ├── App.vue                     ← 更新（代码高亮主题）
+        ├── App.vue                     ← 更新（代码高亮主题 CSS）
         ├── components/
         │   ├── ChatMessage.vue         ← 更新（Markdown 渲染 + 来源卡片美化）
         │   ├── DocumentUploader.vue    ← 新增
         │   └── ErrorBoundary.vue       ← 新增
         ├── composables/
-        │   ├── useMarkdown.ts          ← 新增
+        │   ├── useMarkdown.ts          ← 新增（post-processing 方案，稳定可靠）
+        │   ├── useSSE.ts               ← 更新（120s 心跳 + 注释行处理）
         │   └── useVirtualScroll.ts     ← 新增
         └── views/
             └── ChatView.vue            ← 更新（上传 + 错误边界）
@@ -1496,3 +1642,76 @@ docs-chat/
 4. **Reranker 和 Embedding 模型的区别？** Embedding 是 Bi-Encoder（分别编码 query 和 doc），速度快但精度有限。Reranker 是 Cross-Encoder（同时编码 query 和 doc），精度高但速度慢。实际工程中两者配合：Bi-Encoder 粗筛 → Cross-Encoder 精排。
 
 完成后告诉我，进入 Day 4：组件单元测试 + Docker 容器化 + 性能优化。
+
+---
+
+## Day 3 Bug 修复记录（2026-06-17 联调验证）
+
+### Bug 1: 代码块语法高亮失效 ✅
+
+**根因**: `App.vue` 中缺少 `highlight.js` 的 GitHub Dark 主题 CSS 类（`.hljs-*`），且 `useMarkdown.ts` 的正则匹配不够健壮。  
+**修复**:
+1. `frontend/src/App.vue` — 添加完整的 highlight.js GitHub Dark 主题 CSS（~70 行颜色规则）
+2. `frontend/src/composables/useMarkdown.ts` — 重写代码块后处理逻辑：
+   - 添加 `.code-block-wrapper` 包裹层，包含语言标签 + 复制按钮
+   - 添加 try/catch 保护 `hljs.highlight()` 调用
+   - 改进 HTML 实体解码（新增 `&#x27;`）
+   - 改进引用角标正则（添加 `(?<!!)` 防止匹配 Markdown 图片语法）
+3. `frontend/src/components/ChatMessage.vue` — 新增样式：
+   - `.code-block-wrapper` 相对定位容器
+   - `.copy-btn` 复制按钮（hover 时显示，点击后反馈"已复制!"）
+   - `.code-lang-label` 语言标签
+   - 复制按钮与语言标签共存时的位置错开处理
+
+### Bug 2: 上传 PDF 后前端状态丢失 ✅
+
+**根因**: `ChatView.vue` 中 `uploadedDocs` 仅为本地 `ref`，页面刷新后丢失；后端缺少文档列表查询接口。  
+**修复**:
+1. `backend/app/services/vector_store.py` — 新增 `get_unique_documents()` 方法，从 ChromaDB metadata 中聚合去重文档信息（filename, chunk_count, page_count）
+2. `backend/app/api/documents.py` — 新增 `GET /documents/` 端点，返回已上传文档列表
+3. `frontend/src/views/ChatView.vue` — 
+   - 新增 `fetchDocuments()` 异步函数，在 `onMounted` 时调用
+   - 新增 `import api from '@/utils/api'`
+   - 上传后文档列表在刷新/新会话后依然可见
+
+### Bug 3: RAGAS 测试集生成与评估完善 ✅
+
+**根因**: 原有脚本缺少完整的 RAGAS 4 维参数结构、缺少独立的测试集生成工具。  
+**修复**:
+1. `backend/scripts/evaluate_rag.py` — 全面重构：
+   - 改进 QA 生成 Prompt（要求更详细的 ground_truth）
+   - 添加问答对格式验证（跳过不合法条目）
+   - 完整 4 维结构输出（question + contexts + answer + ground_truth）
+   - 评估结果增加评分等级（✅优秀 / ⚠️良好 / ❌需改进）
+   - 额外保存 `eval_details.json`（包含完整评估细节）
+   - 尝试导入更多指标（`context_precision`, `answer_correctness`）
+   - 输出"简历金句"方便直接引用评估数据
+2. `backend/scripts/generate_testset.py` — **新文件**，独立测试集生成工具：
+   - `--count` 控制生成数量
+   - `--full` 构建完整 4 维测试集
+   - `--output` 指定输出文件名
+   - 可独立运行，不依赖 evaluate_rag.py
+
+### Bug 4: 来源引用角标悬浮卡片数据为 null ✅
+
+**根因**: 后端 Pydantic `SourceCitation` 使用 `snake_case`（`document_name`, `relevance_score`），前端 TypeScript `SourceCitation` 接口使用 `camelCase`（`documentName`, `relevanceScore`）。`JSON.parse()` 后字段名不匹配导致 `source.documentName` 为 `undefined`。  
+**修复**:
+1. `backend/app/models/schemas.py` — 将 `SourceCitation` 字段名改为 camelCase：
+   - `document_name` → `documentName`
+   - `relevance_score` → `relevanceScore`
+2. `backend/app/services/rag_service.py` — 同步更新 `SourceCitation` 构造代码中的字段名
+
+### 修改文件汇总
+
+| 文件 | 操作 | 涉及任务 |
+|------|------|----------|
+| `frontend/src/App.vue` | 修改 | Bug 1 — 添加 hljs CSS 主题 |
+| `frontend/src/composables/useMarkdown.ts` | 重写 | Bug 1 — 代码块高亮 + 复制按钮 |
+| `frontend/src/components/ChatMessage.vue` | 修改 | Bug 1 — 代码块样式 + 复制按钮样式 |
+| `frontend/src/views/ChatView.vue` | 修改 | Bug 2 — 文档状态持久化 |
+| `backend/app/models/schemas.py` | 修改 | Bug 4 — SourceCitation camelCase |
+| `backend/app/services/rag_service.py` | 修改 | Bug 4 — 字段名同步 |
+| `backend/app/services/vector_store.py` | 修改 | Bug 2 — 新增 get_unique_documents() |
+| `backend/app/api/documents.py` | 修改 | Bug 2 — 新增 GET /documents/ 端点 |
+| `backend/scripts/evaluate_rag.py` | 重写 | Bug 3 — 完善评估脚本 |
+| `backend/scripts/generate_testset.py` | 新增 | Bug 3 — 独立测试集生成工具 |

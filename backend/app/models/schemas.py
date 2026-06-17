@@ -30,12 +30,12 @@ class MessageCreate(BaseModel):
 
 
 class SourceCitation(BaseModel):
-    """检索到的来源引用"""
+    """检索到的来源引用（字段名与前端 TypeScript 接口对齐）"""
     index: int
     content: str
     page: Optional[int] = None
-    document_name: Optional[str] = None
-    relevance_score: float = 0.0
+    documentName: Optional[str] = None
+    relevanceScore: float = 0.0
 
 
 class Message(BaseModel):

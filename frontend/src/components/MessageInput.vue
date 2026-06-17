@@ -15,10 +15,14 @@ function handleSend() {
   input.value = ''
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
+function handleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
     handleSend()
+  }
+  if (event.key === 'Escape') {
+    // 聚焦状态下按 Escape 取消输入
+    (event.target as HTMLTextAreaElement).blur()
   }
 }
 </script>
@@ -31,6 +35,8 @@ function handleKeydown(e: KeyboardEvent) {
       :disabled="isSending"
       placeholder="输入消息，Enter 发送，Shift+Enter 换行"
       rows="1"
+      aria-label="输入消息"
+      role="textbox"
       @keydown="handleKeydown"
       @input="(e) => {
         const el = e.target as HTMLTextAreaElement
@@ -41,6 +47,9 @@ function handleKeydown(e: KeyboardEvent) {
     <button
       class="send-btn"
       :disabled="!input.trim() || isSending"
+      :aria-disabled="isSending || !input.trim()"
+      aria-label="发送消息"
+
       @click="handleSend"
     >
       {{ isSending ? '发送中...' : '发送' }}

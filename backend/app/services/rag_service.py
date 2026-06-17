@@ -58,8 +58,8 @@ class RAGService:
                     index=i + 1,
                     content=item["content"][:300],  # 截断展示
                     page=item.get("page"),
-                    document_name=item.get("document_name"),
-                    relevance_score=item.get("score", 0.0),
+                    documentName=item.get("document_name"),
+                    relevanceScore=item.get("score", 0.0),
                 ))
                 contexts.append(f"[{i + 1}] (来源: {item.get('document_name', '未知')}, "
                                f"第{item.get('page', '?')}页)\n{item['content']}")

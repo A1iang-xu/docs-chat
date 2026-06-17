@@ -117,9 +117,65 @@ class VectorStoreService:
 
         return items
 
+    def get_all_chunks(self) -> list[dict]:
+        """
+        获取所有已存储的文档块（用于重建 BM25 索引等场景）。
+
+        Returns:
+            [{"chunk_id": "...", "content": "...", "document_name": "...", "page": 0}, ...]
+        """
+        if self.collection.count() == 0:
+            return []
+
+        results = self.collection.get(include=["metadatas"])
+        chunks = []
+        if results["ids"]:
+            for i, chunk_id in enumerate(results["ids"]):
+                meta = results["metadatas"][i] if results["metadatas"] else {}
+                chunks.append({
+                    "chunk_id": chunk_id,
+                    "content": meta.get("content", ""),
+                    "document_name": meta.get("document_name", ""),
+                    "page": meta.get("page", 0),
+                })
+        return chunks
+
     def get_chunk_count(self) -> int:
         """获取已存储的向量总数"""
         return self.collection.count()
+
+    def get_unique_documents(self) -> list[dict]:
+        """
+        获取所有已上传的文档列表（去重），用于前端文档状态同步。
+
+        Returns:
+            [{"filename": "...", "chunk_count": N, "page_count": N, "uploaded_at": "..."}, ...]
+        """
+        if self.collection.count() == 0:
+            return []
+
+        results = self.collection.get(include=["metadatas"])
+        doc_map: dict[str, dict] = {}
+
+        if results["ids"]:
+            for i, chunk_id in enumerate(results["ids"]):
+                meta = results["metadatas"][i] if results["metadatas"] else {}
+                filename = meta.get("document_name", "")
+                if not filename:
+                    continue
+                if filename not in doc_map:
+                    doc_map[filename] = {
+                        "filename": filename,
+                        "chunk_count": 0,
+                        "page_count": meta.get("page", 0),
+                    }
+                doc_map[filename]["chunk_count"] += 1
+                # Track max page seen for this document
+                doc_map[filename]["page_count"] = max(
+                    doc_map[filename]["page_count"], meta.get("page", 0),
+                )
+
+        return list(doc_map.values())
 
     def clear(self):
         """清空向量库"""

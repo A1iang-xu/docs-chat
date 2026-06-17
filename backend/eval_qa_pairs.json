@@ -1,0 +1,22 @@
+[
+  {
+    "question": "Vue3相比Vue2有哪些优势？Vue2是否还在维护？",
+    "ground_truth": "Vue3相比Vue2具有打包更小、内存更少、渲染更快的优势。Vue2已经于2023年12月31日停止维护，官方建议升级到Vue.js 3.0版本。另外，Vue3向下兼容Vue2的语法，因此从Vue2迁移到Vue3会比较顺畅。"
+  },
+  {
+    "question": "在Vue3的setup函数中，如何定义响应式对象数据？与ref有什么区别？",
+    "ground_truth": "在Vue3中，可以使用reactive函数定义对象型响应式数据，语法为：let salaryInfo = reactive({userName:'王⼀', salary:15000})，其返回值是一个Proxy实例对象，具有双向绑定能力。与ref的区别在于：ref用于定义基本类型或单个值的响应式数据，在脚本中操作时需要加.value（如 salary.value += 1000），而reactive直接处理对象，不需要.value。另外，ref定义的响应式数据在模板中会自动解包，但reactive不会。"
+  },
+  {
+    "question": "在Vue3的路由配置中，如何设置默认跳转页面和子路由？请举例说明。",
+    "ground_truth": "在Vue3路由配置中，可以通过redirect属性设置默认跳转页面，例如：{ path: '/', redirect: '/home' } 表示访问根路径时自动跳转到/home页面。子路由通过children数组定义，例如：{ path: '/news', component: NewsPage, children: [{ path: '1', component: News1 }, { path: '2', component: News2 }] }，这样访问/news/1时会渲染News1组件，访问/news/2时会渲染News2组件。"
+  },
+  {
+    "question": "在Vue3的组件中，如果不想用文件名作为组件名，应该如何自定义组件名称？",
+    "ground_truth": "在Vue3组件中，可以通过在export default对象中添加name属性来自定义组件名称。例如：export default { name: 'SalaryInfo' }，这样组件名就被设置为'SalaryInfo'，而不是默认的文件名。这在调试、递归组件或使用<keep-alive>时非常有用。"
+  },
+  {
+    "question": "在Vue3的setup函数中，如果直接声明普通变量（如let userName='王⼀'），这些变量是否具备双向绑定能力？应该如何正确处理？",
+    "ground_truth": "在Vue3的setup函数中直接声明的普通变量（如let userName='王⼀'）不具备双向绑定能力，它们只是普通的JavaScript变量，修改后不会触发视图更新。要使其具备响应式能力，需要使用ref或reactive包裹。对于基本类型数据，应使用ref定义（如let userName = ref('王⼀')），并在脚本中通过.value访问和修改。同时，setup函数需要返回模板中使用的变量和方法，例如：return {userName, salary, addSalary}。"
+  }
+]
