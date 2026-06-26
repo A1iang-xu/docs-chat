@@ -1,0 +1,29 @@
+# v4.5: Ruff 配置 —— Python linter & formatter
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# 启用规则集
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+]
+# 忽略的规则
+ignore = [
+    "E501",   # line too long（项目中有长字符串）
+    "E402",   # module level import not at top（延迟导入是设计模式）
+    "F401",   # imported but unused（部分导入用于副作用）
+    "F841",   # local variable assigned but never used
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# 测试文件放宽规则
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F841", "E402"]
+"scripts/*" = ["E402"]

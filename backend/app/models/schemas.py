@@ -27,6 +27,7 @@ class Conversation(BaseModel):
 class MessageCreate(BaseModel):
     conversation_id: str
     content: str = Field(..., min_length=1, max_length=10000)
+    library: Optional[str] = None  # v4.0: 库过滤
 
 
 class SourceCitation(BaseModel):
@@ -36,6 +37,11 @@ class SourceCitation(BaseModel):
     page: Optional[int] = None
     documentName: Optional[str] = None
     relevanceScore: float = 0.0
+    # v4.0: URL 引用溯源
+    sourceUrl: Optional[str] = None
+    headingPath: Optional[str] = None
+    library: Optional[str] = None
+    version: Optional[str] = None
 
 
 class Message(BaseModel):
@@ -57,7 +63,20 @@ class DocumentMeta(BaseModel):
     page_count: int = 0
     chunk_count: int = 0
     uploaded_at: datetime = Field(default_factory=datetime.now)
-    status: Literal["processing", "ready", "error"] = "processing"
+    status: Literal["queued", "running", "processing", "ready", "failed", "error"] = "processing"
+    error: Optional[str] = None
+
+
+class DocumentJob(BaseModel):
+    """异步文档摄取任务状态"""
+    job_id: str
+    filename: str
+    status: Literal["queued", "running", "ready", "failed"]
+    page_count: int = 0
+    chunk_count: int = 0
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 # ═══════════════════════════════════════════
@@ -66,7 +85,7 @@ class DocumentMeta(BaseModel):
 
 class SSEEvent(BaseModel):
     """SSE 流式响应的单次事件"""
-    event: Literal["token", "source", "done", "error"]
+    event: Literal["token", "source", "done", "error", "cache", "faithfulness_warning"]
     data: str
 
 
@@ -77,3 +96,35 @@ class SSEEvent(BaseModel):
 class ErrorResponse(BaseModel):
     detail: str
     code: str = "internal_error"
+
+
+# ═══════════════════════════════════════════
+# v4.0: URL 摄取 & 多库
+# ═══════════════════════════════════════════
+
+class IngestUrlRequest(BaseModel):
+    """提交文档站 URL 抓取入库请求"""
+    url: str
+    library_slug: str = Field(..., pattern=r"^[a-z0-9-]+$")
+    version: str = "latest"
+
+
+class LibraryInfo(BaseModel):
+    """文档库信息"""
+    library: str
+    version: str
+    chunk_count: int
+    source_url: Optional[str] = None
+
+
+# ═══════════════════════════════════════════
+# v4.0: 用户反馈
+# ═══════════════════════════════════════════
+
+class FeedbackRequest(BaseModel):
+    """用户对答案的反馈"""
+    message_id: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    answer: str = Field(..., min_length=1)
+    sources: list[dict] = Field(default_factory=list)
+    feedback: Literal["positive", "negative"]

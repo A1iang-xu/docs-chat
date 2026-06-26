@@ -1,0 +1,62 @@
+[
+  {
+    "query": "what is ref() in Vue",
+    "expected_keywords": ["reactive", "reference", ".value"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "how to use computed in Vue 3",
+    "expected_keywords": ["computed", "cache", "readonly"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "difference between ref and reactive",
+    "expected_keywords": ["ref", "reactive", "primitive", "object"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "what is the return type of ref",
+    "expected_keywords": ["RefImpl", "Ref", "value"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "how to write a composable",
+    "expected_keywords": ["function", "reactive", "reusable"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "watch vs watchEffect difference",
+    "expected_keywords": ["watch", "watchEffect", "lazy", "immediate"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "Vue 3 lifecycle hooks list",
+    "expected_keywords": ["onMounted", "onUnmounted", "onUpdated"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "what is Composition API",
+    "expected_keywords": ["composition", "function", "composable"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "how to create a writable computed",
+    "expected_keywords": ["get", "set", "computed"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "reactive() function usage",
+    "expected_keywords": ["reactive", "proxy", "object"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  }
+]

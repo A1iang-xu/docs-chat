@@ -1,77 +1,93 @@
+"""文档 API —— 上传、异步解析任务、文档状态。"""
+from __future__ import annotations
+
 import logging
-import os
+import re
 import shutil
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from app.models.schemas import DocumentMeta
-from app.services.document_service import document_service
-from app.services.vector_store import vector_store
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+
+from app.models.schemas import DocumentJob
+from app.services.ingestion_service import ingestion_service
+from app.services.mineru_document_service import mineru_document_service
 from app.services.retrieval_service import retrieval_service
+from app.services.vector_store import vector_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.post("/upload", response_model=DocumentMeta)
-async def upload_document(file: UploadFile = File(...)):
-    """
-    上传 PDF 文档 → 解析 → 分块 → 向量化 → 存入 ChromaDB。
+_ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".html", ".json"}
 
-    返回文档元信息（页数、分块数、状态）。
-    """
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 格式")
 
-    # ── 1. 保存上传文件 ──
-    file_path = os.path.join(document_service.upload_dir, file.filename)
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+@router.post("/upload", response_model=DocumentJob)
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    library: Optional[str] = Query(default=None, description="v4.0: 指定文档库（默认 default）"),
+):
+    """上传文档（v4.0: 支持 PDF/TXT/MD/HTML/JSON）后立即返回异步解析任务。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名为空")
 
-    logger.info(f"文件已保存: {file_path}")
-
-    try:
-        # ── 2. 解析 + 分块 ──
-        chunks = document_service.load_and_split(file_path)
-
-        if not chunks:
-            raise HTTPException(status_code=500, detail="文档解析失败，未生成有效分块")
-
-        # ── 3. 向量化 + 存入 ChromaDB ──
-        chunk_count = vector_store.add_chunks(chunks)
-
-        # ── 4. 重建 BM25 索引 ──
-        # 从 ChromaDB 获取所有分块数据用于 BM25
-        all_chunks = [chunk.to_dict() for chunk in chunks]
-        retrieval_service.build_bm25_index(all_chunks)
-
-        doc_meta = DocumentMeta(
-            filename=file.filename,
-            page_count=chunks[0].metadata.get("total_pages", 0) if chunks else 0,
-            chunk_count=chunk_count,
-            status="ready",
+    ext = Path(file.filename).suffix.lower()
+    # v4.0: 放宽仅 PDF 的限制，支持常见文档格式
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件格式: {ext}。支持: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
         )
 
-        logger.info(f"文档入库完成: {file.filename}, {doc_meta.chunk_count} 个块")
-        return doc_meta
+    safe_name = _safe_filename(file.filename)
+    file_path = Path(mineru_document_service.upload_dir) / safe_name
+    file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    except Exception as e:
-        logger.error(f"文档处理失败: {e}")
-        raise HTTPException(status_code=500, detail=f"文档处理失败: {str(e)}")
+    try:
+        with file_path.open("wb") as target:
+            shutil.copyfileobj(file.file, target)
+    except Exception as exc:
+        logger.exception("保存上传文件失败")
+        raise HTTPException(status_code=500, detail=f"保存上传文件失败: {exc}") from exc
+
+    job = ingestion_service.create_job(file_path=file_path, original_filename=safe_name)
+    # v4.0: 传递 library 参数
+    state = ingestion_service._jobs.get(job.job_id)
+    if state and library:
+        state.library = library
+    background_tasks.add_task(ingestion_service.run_job, job.job_id)
+    logger.info("文档上传成功，已创建摄取任务: %s %s (library=%s)", job.job_id, safe_name, library or "default")
+    return job
+
+
+@router.get("/jobs/{job_id}", response_model=DocumentJob)
+async def get_job(job_id: str):
+    job = ingestion_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
+
+
+@router.get("/jobs", response_model=list[DocumentJob])
+async def list_jobs():
+    return ingestion_service.list_jobs()
 
 
 @router.get("/")
 async def list_documents():
-    """
-    获取已上传的文档列表。
-
-    用于前端页面刷新后恢复文档状态显示。
-    """
     return vector_store.get_unique_documents()
 
 
 @router.get("/status")
 async def get_status():
-    """获取向量库状态"""
     return {
         "chunk_count": vector_store.get_chunk_count(),
         "has_bm25_index": retrieval_service.bm25 is not None,
+        "jobs": [job.model_dump() for job in ingestion_service.list_jobs()],
     }
+
+
+def _safe_filename(filename: str) -> str:
+    cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", filename).strip("._")
+    return cleaned or "document.pdf"

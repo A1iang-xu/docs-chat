@@ -18,6 +18,10 @@ export function useSSE(options: SSEOptions = {}) {
   const sources = ref<SourceCitation[]>([])
   const isStreaming = ref(false)
   const error = ref<string | null>(null)
+  const cacheHit = ref(false)
+  const stage = ref<string>('')
+  const stageLabel = ref<string>('')
+  const faithfulnessWarning = ref<string | null>(null)
 
   let abortController: AbortController | null = null
   let retryCount = 0
@@ -49,6 +53,10 @@ export function useSSE(options: SSEOptions = {}) {
     content.value = ''
     sources.value = []
     error.value = null
+    cacheHit.value = false
+    stage.value = ''
+    stageLabel.value = ''
+    faithfulnessWarning.value = null
     isStreaming.value = true
     retryCount = 0
     await doConnect(url, body)
@@ -60,9 +68,13 @@ export function useSSE(options: SSEOptions = {}) {
     try {
       resetHeartbeat()
 
+      const token = localStorage.getItem('docschat_token') || import.meta.env.VITE_DEV_AUTH_TOKEN
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body),
         signal: abortController.signal,
       })
@@ -106,6 +118,8 @@ export function useSSE(options: SSEOptions = {}) {
                   break
                 case 'done':
                   isStreaming.value = false
+                  stage.value = ''
+                  stageLabel.value = ''
                   clearHeartbeat()
                   return
                 case 'error':
@@ -113,6 +127,31 @@ export function useSSE(options: SSEOptions = {}) {
                   isStreaming.value = false
                   clearHeartbeat()
                   return
+                case 'cache':
+                  cacheHit.value = true
+                  break
+                case 'stage':
+                  // v4.4: 阶段事件 (retrieving/generating/faithfulness_check/complete)
+                  try {
+                    const stageData = JSON.parse(event.data)
+                    stage.value = stageData.stage || ''
+                    stageLabel.value = stageData.label || ''
+                  } catch {
+                    // ignore parse error
+                  }
+                  break
+                case 'faithfulness_warning':
+                  // v4.0: 忠实度警告事件
+                  console.warn('[SSE] 忠实度警告:', event.data)
+                  try {
+                    const warnData = JSON.parse(event.data)
+                    faithfulnessWarning.value = warnData.retries_exhausted
+                      ? '部分信息无法从文档中完全确认，请注意甄别'
+                      : '正在修正可能不准确的回答...'
+                  } catch {
+                    faithfulnessWarning.value = '答案忠实度校验中...'
+                  }
+                  break
               }
             } catch {
               // 非 JSON 行，忽略
@@ -144,5 +183,5 @@ export function useSSE(options: SSEOptions = {}) {
     abort()
   })
 
-  return { content, sources, isStreaming, error, connect, abort }
+  return { content, sources, isStreaming, error, cacheHit, stage, stageLabel, faithfulnessWarning, connect, abort }
 }

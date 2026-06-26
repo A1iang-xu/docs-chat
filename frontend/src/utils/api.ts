@@ -16,6 +16,10 @@ const api = axios.create({
 // ── 请求拦截器 ──
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const token = localStorage.getItem('docschat_token') || import.meta.env.VITE_DEV_AUTH_TOKEN
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error: AxiosError) => Promise.reject(error),

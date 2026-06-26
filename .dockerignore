@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Docker
+Dockerfile
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 数据目录（不应打包进镜像）
+chroma_data/
+uploads/
+eval_results/
+mineru_output/
+*.db
+*.sqlite3
+
+# 环境变量
+.env
+.env.local
+.env.docker
+
+# 文档
+*.md
+!frontend/README.md

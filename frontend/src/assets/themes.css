@@ -1,0 +1,34 @@
+/* v4.5: 亮色主题变量定义 —— 通过 [data-theme="light"] 覆盖暗色默认值 */
+
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg2: #f6f8fa;
+  --ink: #1f2328;
+  --muted: #656d76;
+  --rule: #d0d7de;
+  --accent: #0969da;
+  --accent2: #1a7f37;
+  --danger: #cf222e;
+}
+
+/* 亮色主题下代码块背景调整 */
+[data-theme="light"] pre {
+  background: #f6f8fa !important;
+}
+
+[data-theme="light"] pre code.hljs {
+  color: #1f2328 !important;
+}
+
+/* 亮色主题下引用来源卡片 */
+[data-theme="light"] .source-card {
+  background: #f6f8fa;
+}
+
+/* 亮色主题下输入框 */
+[data-theme="light"] input,
+[data-theme="light"] textarea,
+[data-theme="light"] select {
+  background: #ffffff;
+  color: #1f2328;
+}

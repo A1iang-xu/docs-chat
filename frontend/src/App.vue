@@ -1,9 +1,68 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import ChatView from '@/views/ChatView.vue'
+import StatsView from '@/views/StatsView.vue'
+import HistorySidebar from '@/components/HistorySidebar.vue'
+import { useTheme } from '@/composables/useTheme'  // v4.5
+
+const currentView = ref<'chat' | 'stats'>('chat')
+const showHistory = ref(false)
+const replayQuery = ref<{ query: string; library: string | null } | null>(null)
+
+// v4.5: 主题切换
+const { themeIcon, themeLabel, toggleTheme } = useTheme()
+
+function handleHistorySelect(query: string, library: string | null) {
+  replayQuery.value = { query, library }
+  showHistory.value = false
+}
 </script>
 
 <template>
-  <ChatView />
+  <nav class="nav-bar">
+    <div class="nav-left">
+      <button
+        :class="['nav-btn', { active: currentView === 'chat' }]"
+        @click="currentView = 'chat'"
+      >
+        对话
+      </button>
+      <button
+        :class="['nav-btn', { active: currentView === 'stats' }]"
+        @click="currentView = 'stats'"
+      >
+        监控
+      </button>
+    </div>
+    <div class="nav-right">
+      <button
+        v-if="currentView === 'chat'"
+        :class="['nav-btn', { active: showHistory }]"
+        @click="showHistory = !showHistory"
+      >
+        历史
+      </button>
+      <button
+        class="nav-btn theme-btn"
+        @click="toggleTheme"
+        :title="`当前: ${themeLabel}（点击切换）`"
+      >
+        {{ themeIcon }}
+      </button>
+    </div>
+  </nav>
+  <div class="main-content">
+    <HistorySidebar
+      v-if="showHistory && currentView === 'chat'"
+      @select="handleHistorySelect"
+    />
+    <ChatView
+      v-if="currentView === 'chat'"
+      :replay="replayQuery"
+      @replay-consumed="replayQuery = null"
+    />
+    <StatsView v-else />
+  </div>
 </template>
 
 <style>
@@ -32,6 +91,50 @@ body {
   color: var(--ink);
   min-height: 100vh;
   overflow: hidden;
+}
+
+/* ── v4.3: 导航栏 ── */
+.nav-bar {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--rule);
+  height: 40px;
+  align-items: center;
+}
+
+.nav-left, .nav-right {
+  display: flex;
+  gap: 4px;
+}
+
+.main-content {
+  display: flex;
+  height: calc(100vh - 40px);
+  overflow: hidden;
+}
+
+.nav-btn {
+  padding: 4px 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.15s;
+}
+
+.nav-btn:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+
+.nav-btn.active {
+  color: var(--accent);
+  border-color: var(--rule);
+  background: var(--bg);
 }
 
 ::-webkit-scrollbar {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import api from '@/utils/api'
-import type { DocumentMeta } from '@/types'
+import type { DocumentJob, DocumentMeta } from '@/types'
 
 const emit = defineEmits<{
   uploaded: [doc: DocumentMeta]
@@ -10,6 +10,7 @@ const emit = defineEmits<{
 const isUploading = ref(false)
 const error = ref<string | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+const timers = new Set<ReturnType<typeof setTimeout>>()
 
 async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
@@ -28,12 +29,14 @@ async function handleFileChange(event: Event) {
     const formData = new FormData()
     formData.append('file', file)
 
-    const { data } = await api.post<DocumentMeta>('/documents/upload', formData, {
+    const { data } = await api.post<DocumentJob>('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120_000, // 大文件上传可能需要较长时间
+      timeout: 60_000,
     })
 
-    emit('uploaded', data)
+    const doc = mapJobToDocument(data)
+    emit('uploaded', doc)
+    pollJob(data.job_id)
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       || (e as Error).message
@@ -49,6 +52,41 @@ async function handleFileChange(event: Event) {
 function triggerUpload() {
   fileInput.value?.click()
 }
+
+async function pollJob(jobId: string) {
+  try {
+    const { data } = await api.get<DocumentJob>(`/documents/jobs/${jobId}`)
+    emit('uploaded', mapJobToDocument(data))
+
+    if (data.status === 'queued' || data.status === 'running') {
+      const timer = setTimeout(() => {
+        timers.delete(timer)
+        pollJob(jobId)
+      }, 1500)
+      timers.add(timer)
+    }
+  } catch (e: unknown) {
+    error.value = (e as Error).message || '获取解析状态失败'
+  }
+}
+
+function mapJobToDocument(job: DocumentJob): DocumentMeta {
+  return {
+    id: job.job_id,
+    jobId: job.job_id,
+    filename: job.filename,
+    pageCount: job.page_count || 0,
+    chunkCount: job.chunk_count || 0,
+    uploadedAt: job.created_at,
+    status: job.status === 'failed' ? 'error' : job.status,
+    error: job.error || null,
+  }
+}
+
+onUnmounted(() => {
+  for (const timer of timers) clearTimeout(timer)
+  timers.clear()
+})
 </script>
 
 <template>

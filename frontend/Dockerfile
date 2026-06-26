@@ -1,28 +1,21 @@
-# ── 阶段 1：构建 ──
-FROM node:20-alpine AS builder
+# ── Stage 1: Build ──
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json package-lock.json* ./
+RUN npm install
 
 COPY . .
 RUN npm run build
 
-# ── 阶段 2：生产运行 ──
-FROM node:20-alpine
+# ── Stage 2: nginx ──
+FROM nginx:alpine
 
-WORKDIR /app
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
 
-# 安装 serve 用于托管静态文件
-RUN npm install -g serve
+EXPOSE 80
 
-# 复制构建产物
-COPY --from=builder /app/dist ./dist
-
-EXPOSE 5173
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost:5173/ || exit 1
-
-CMD ["serve", "-s", "dist", "-l", "5173"]
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+    CMD wget -q --spider http://localhost/ || exit 1

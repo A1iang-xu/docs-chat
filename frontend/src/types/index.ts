@@ -35,6 +35,15 @@ export interface SourceCitation {
   documentName?: string
   /** 相关性分数 */
   relevanceScore: number
+  // v4.0: URL 引用溯源
+  /** 来源 URL（可点击跳转回原文） */
+  sourceUrl?: string
+  /** 标题路径（如 "Guide > Reactivity"） */
+  headingPath?: string
+  /** 所属文档库 */
+  library?: string
+  /** 文档版本 */
+  version?: string
 }
 
 export interface Message {
@@ -55,7 +64,7 @@ export interface MessageCreate {
 // 文档
 // ═══════════════════════════════════════════
 
-export type DocumentStatus = 'processing' | 'ready' | 'error'
+export type DocumentStatus = 'queued' | 'running' | 'processing' | 'ready' | 'failed' | 'error'
 
 export interface DocumentMeta {
   id: string
@@ -64,13 +73,26 @@ export interface DocumentMeta {
   chunkCount: number
   uploadedAt: string
   status: DocumentStatus
+  error?: string | null
+  jobId?: string
+}
+
+export interface DocumentJob {
+  job_id: string
+  filename: string
+  status: 'queued' | 'running' | 'ready' | 'failed'
+  page_count: number
+  chunk_count: number
+  error?: string | null
+  created_at: string
+  updated_at: string
 }
 
 // ═══════════════════════════════════════════
 // SSE 事件
 // ═══════════════════════════════════════════
 
-export type SSEEventType = 'token' | 'source' | 'done' | 'error'
+export type SSEEventType = 'token' | 'source' | 'done' | 'error' | 'cache' | 'faithfulness_warning'
 
 export interface SSEEvent {
   event: SSEEventType

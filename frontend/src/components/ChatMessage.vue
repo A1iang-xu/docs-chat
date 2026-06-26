@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMarkdown } from '@/composables/useMarkdown'
+import api from '@/utils/api'
 import type { Message } from '@/types'
 
 const props = defineProps<{
@@ -25,6 +26,42 @@ const displayContent = computed(() => {
   }
   return props.message.content
 })
+
+// v4.4: 来源卡片展开状态
+const expandedSources = ref<Set<number>>(new Set())
+
+function toggleSource(index: number) {
+  if (expandedSources.value.has(index)) {
+    expandedSources.value.delete(index)
+  } else {
+    expandedSources.value.add(index)
+  }
+}
+
+// v4.0: 反馈
+const feedbackSubmitted = ref(false)
+const lastFeedback = ref<'positive' | 'negative' | null>(null)
+const submittingFeedback = ref(false)
+
+async function submitFeedback(choice: 'positive' | 'negative') {
+  if (submittingFeedback.value) return
+  submittingFeedback.value = true
+  try {
+    await api.post('/feedback/', {
+      message_id: props.message.id,
+      query: '',  // the chat backend doesn't persist queries yet
+      answer: props.message.content,
+      sources: props.message.sources,
+      feedback: choice,
+    })
+    lastFeedback.value = choice
+    feedbackSubmitted.value = true
+  } catch {
+    // silent fail
+  } finally {
+    submittingFeedback.value = false
+  }
+}
 </script>
 
 <template>
@@ -48,17 +85,80 @@ const displayContent = computed(() => {
           v-for="source in message.sources"
           :key="source.index"
           class="source-badge"
+          @click="toggleSource(source.index)"
         >
           [{{ source.index }}]
+          <!-- v4.4: 悬浮 tooltip（桌面端） -->
           <span class="source-tooltip">
             <div class="tooltip-header">
-              {{ source.documentName || '未知文档' }}
+              <!-- v4.0: 可点击链接跳转原文 -->
+              <a
+                v-if="source.sourceUrl"
+                :href="source.sourceUrl"
+                target="_blank"
+                rel="noopener"
+                class="source-link"
+                @click.stop
+              >
+                {{ source.headingPath || source.documentName || '未知文档' }}
+              </a>
+              <template v-else>
+                {{ source.documentName || '未知文档' }}
+              </template>
               <span v-if="source.page">· 第 {{ source.page }} 页</span>
+              <span v-if="source.library" class="tooltip-library">· {{ source.library }}</span>
             </div>
             <div class="tooltip-body">{{ source.content }}</div>
             <div class="tooltip-score">相关度: {{ (source.relevanceScore * 100).toFixed(1) }}%</div>
           </span>
         </span>
+
+        <!-- v4.4: 展开的来源卡片（点击后） -->
+        <div
+          v-for="source in message.sources.filter(s => expandedSources.has(s.index))"
+          :key="'expanded-' + source.index"
+          class="source-card"
+        >
+          <div class="card-header">
+            <a
+              v-if="source.sourceUrl"
+              :href="source.sourceUrl"
+              target="_blank"
+              rel="noopener"
+              class="source-link"
+            >
+              [{{ source.index }}] {{ source.headingPath || source.documentName || '未知文档' }}
+            </a>
+            <span v-else>[{{ source.index }}] {{ source.documentName || '未知文档' }}</span>
+            <span v-if="source.library" class="card-library">{{ source.library }}</span>
+            <span class="card-score">{{ (source.relevanceScore * 100).toFixed(1) }}%</span>
+            <button class="card-close" @click="toggleSource(source.index)">×</button>
+          </div>
+          <div class="card-body">{{ source.content }}</div>
+        </div>
+      </div>
+
+      <!-- v4.0: 用户反馈按钮 -->
+      <div v-if="isAssistant && message.id" class="feedback">
+        <button
+          class="feedback-btn"
+          :class="{ active: lastFeedback === 'positive' }"
+          :disabled="feedbackSubmitted"
+          title="回答有用"
+          @click="submitFeedback('positive')"
+        >
+          👍
+        </button>
+        <button
+          class="feedback-btn"
+          :class="{ active: lastFeedback === 'negative' }"
+          :disabled="feedbackSubmitted"
+          title="回答有误"
+          @click="submitFeedback('negative')"
+        >
+          👎
+        </button>
+        <span v-if="feedbackSubmitted" class="feedback-done">感谢反馈</span>
       </div>
     </div>
   </div>
@@ -343,6 +443,108 @@ const displayContent = computed(() => {
   padding: 0.35rem 0.75rem;
   background: var(--bg2);
   border-top: 1px solid var(--rule);
+  font-size: 0.72rem;
+  color: var(--accent2);
+}
+
+/* v4.0: tooltip header link */
+.source-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.source-link:hover {
+  text-decoration: underline;
+}
+
+.tooltip-library {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* v4.4: 展开的来源卡片 */
+.source-card {
+  margin-top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.card-library {
+  padding: 1px 6px;
+  background: rgba(88, 166, 255, 0.1);
+  border-radius: 3px;
+  font-size: 0.65rem;
+  color: var(--accent);
+}
+.card-score {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--accent2);
+  font-weight: 400;
+}
+.card-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  transition: color 0.15s;
+}
+.card-close:hover {
+  color: var(--danger);
+}
+.card-body {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--ink);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* v4.0: 反馈按钮 */
+.feedback {
+  margin-top: 0.65rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.feedback-btn {
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  opacity: 0.5;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.feedback-btn:hover:not(:disabled) {
+  opacity: 1;
+  border-color: var(--accent);
+}
+.feedback-btn.active {
+  opacity: 1;
+  border-color: var(--accent2);
+  background: rgba(63, 185, 80, 0.1);
+}
+.feedback-btn:disabled {
+  cursor: default;
+}
+.feedback-done {
   font-size: 0.72rem;
   color: var(--accent2);
 }

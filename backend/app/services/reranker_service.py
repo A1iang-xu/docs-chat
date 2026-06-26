@@ -1,84 +1,182 @@
 """Reranker 重排序服务 —— 在混合检索后对结果做精排
 
-面试要点: 能解释 Reranker 为什么重要 ——
-混合检索的 RRF 融合是无监督的，无法利用语义信息进行精细排序。
-Reranker 使用 Cross-Encoder 结构，将 query 和 document 同时输入模型，
-逐对计算相关性分数，精度远高于 Bi-Encoder（Embedding 模型）。
-
-本实现使用 sentence-transformers 的 CrossEncoder。
+架构要求: Qwen3-Reranker-0.6B (RERANKER_TYPE=qwen) 远程模式,
+          BGE-Reranker-v2-m3 (RERANKER_TYPE=fallback) 本地 CrossEncoder 降级。
+本地模型缓存: HuggingFace 默认 ~/.cache/huggingface/hub/ (可通过 HF_HOME 修改)。
 """
+from __future__ import annotations
+
+import asyncio
 import logging
+import os
 from typing import List
+
 from sentence_transformers import CrossEncoder
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+class RemoteReranker:
+    def __init__(self, api_url="", model="", timeout=30, max_retries=2):
+        self.api_url = (api_url or settings.RERANKER_API_URL).rstrip("/")
+        self.model = model or settings.RERANKER_MODEL
+        self.timeout = timeout or settings.RERANKER_API_TIMEOUT
+        self.max_retries = max_retries
+        self._available: bool | None = None
+
+    async def check_availability(self) -> bool:
+        if self._available is not None:
+            return self._available
+        if not self.api_url:
+            self._available = False
+            return False
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(self.api_url + "/health")
+                self._available = resp.status_code < 500
+        except Exception:
+            self._available = False
+        return self._available
+
+    async def rerank(self, query, documents, top_k=5):
+        if not documents:
+            return []
+        try:
+            return await self._rerank_via_endpoint(query, documents, top_k)
+        except Exception as exc:
+            logger.warning("remote /rerank failed, try scoring: %s", exc)
+            try:
+                return await self._rerank_via_scoring(query, documents, top_k)
+            except Exception as exc2:
+                raise RuntimeError(f"remote reranker unavailable: {exc2}") from exc2
+
+    async def _rerank_via_endpoint(self, query, documents, top_k):
+        import httpx
+        doc_texts = [str(d.get("content", ""))[:settings.RERANKER_MAX_LENGTH] for d in documents]
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(
+                        self.api_url + "/rerank",
+                        json={"model": self.model, "query": query, "documents": doc_texts, "top_n": top_k},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    results = data.get("results", [])
+                    ranked = []
+                    for r in sorted(results, key=lambda r: r.get("relevance_score", 0), reverse=True):
+                        idx = int(r.get("index", 0))
+                        if idx < len(documents):
+                            ranked.append({**documents[idx], "score": float(r.get("relevance_score", 0))})
+                    return ranked[:top_k]
+            except Exception as exc:
+                if attempt < self.max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    raise exc
+        return documents[:top_k]
+
+    async def _rerank_via_scoring(self, query, documents, top_k):
+        import httpx
+        import numpy as np
+        doc_texts = [str(d.get("content", ""))[:settings.RERANKER_MAX_LENGTH] for d in documents]
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                self.api_url + "/embeddings",
+                json={"model": self.model, "input": [query] + doc_texts},
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            embeds = [item["embedding"] for item in sorted(data.get("data", []), key=lambda x: int(x.get("index", 0)))]
+        if len(embeds) < 2:
+            return documents[:top_k]
+        qv = np.array(embeds[0])
+        for i, de in enumerate(embeds[1:]):
+            dv = np.array(de)
+            documents[i]["score"] = float(np.dot(qv, dv) / (np.linalg.norm(qv) * np.linalg.norm(dv) + 1e-8))
+        return sorted(documents, key=lambda x: float(x.get("score", 0)), reverse=True)[:top_k]
+
+
 class RerankerService:
-    """
-    使用 BGE-Reranker-v2-m3 对检索结果做精排。
-
-    模型规模:
-    - BGE-Reranker-v2-m3: ~568M 参数，中文效果优秀
-    - 推理速度: ~50 docs/s (CPU), ~500 docs/s (GPU)
-
-    选型理由: 开源可本地部署、中文效果好、延迟可控。
-    备选: Cohere Rerank API（商业方案，精度更高但需付费）。
-    """
-
     def __init__(self):
         self.model: CrossEncoder | None = None
         self.model_name = settings.RERANKER_MODEL
         self._loaded = False
+        self._remote: RemoteReranker | None = None
+        self._use_remote: bool | None = None
+
+    async def _probe_mode(self) -> bool:
+        if self._use_remote is not None:
+            return self._use_remote
+        if settings.RERANKER_TYPE == "qwen" and settings.RERANKER_API_URL:
+            self._remote = RemoteReranker()
+            self._use_remote = await self._remote.check_availability()
+            if self._use_remote:
+                logger.info("reranker mode: remote Qwen @ %s", settings.RERANKER_API_URL)
+                return True
+        self._use_remote = False
+        logger.info("reranker mode: local %s", self.model_name)
+        return False
 
     def _lazy_load(self):
-        """延迟加载模型（首次使用时下载，约 2.2GB）"""
         if not self._loaded:
-            logger.info(f"加载 Reranker 模型: {self.model_name}")
-            self.model = CrossEncoder(
-                self.model_name,
-                max_length=512,
-            )
-            self._loaded = True
-            logger.info("Reranker 模型加载完成")
+            logger.info("loading local reranker: %s (cache: %s)", self.model_name, _hf_dir())
+            try:
+                self.model = CrossEncoder(self.model_name, max_length=settings.RERANKER_MAX_LENGTH)
+                self._loaded = True
+                logger.info("local reranker loaded")
+            except Exception as exc:
+                logger.error("local reranker load failed: %s", exc)
+                raise
 
-    def rerank(
-        self,
-        query: str,
-        documents: List[dict],
-        top_k: int | None = None,
-    ) -> List[dict]:
-        """
-        对候选文档做精排。
+    def rerank(self, query, documents, top_k=None):
+        return asyncio.run(self._rerank_async(query, documents, top_k))
 
-        Args:
-            query: 查询文本
-            documents: 候选文档列表，每项需包含 content 字段
-            top_k: 返回数量（默认从配置读取）
-
-        Returns:
-            重排序后的文档列表，score 更新为 Reranker 分数
-        """
-        self._lazy_load()
+    async def _rerank_async(self, query, documents, top_k=None):
         top_k = top_k or settings.RERANKER_TOP_K
-
         if not documents:
             return []
 
-        # ── 准备输入对 ──
-        pairs = [[query, doc["content"]] for doc in documents]
+        use_remote = await self._probe_mode()
+        if use_remote and self._remote:
+            try:
+                return await self._remote.rerank(query, documents, top_k)
+            except Exception as exc:
+                logger.warning("remote reranker failed, fallback to local: %s", exc)
 
-        # ── 计算分数 ──
-        scores = self.model.predict(pairs, show_progress_bar=False)
+        local_ok = False
+        try:
+            self._lazy_load()
+            local_ok = True
+        except Exception as exc:
+            logger.error("local reranker unavailable: %s", exc)
 
-        # ── 按分数排序 ──
-        for i, doc in enumerate(documents):
-            doc["score"] = float(scores[i])
+        if local_ok:
+            pairs = [[query, d["content"]] for d in documents]
+            scores = self.model.predict(pairs, show_progress_bar=False)
+            for i, d in enumerate(documents):
+                d["score"] = float(scores[i])
+            return sorted(documents, key=lambda x: x["score"], reverse=True)[:top_k]
 
-        ranked = sorted(documents, key=lambda x: x["score"], reverse=True)
-        return ranked[:top_k]
+        return sorted(documents, key=lambda x: float(x.get("score", 0)), reverse=True)[:top_k]
+
+    async def check_health(self):
+        use_remote = await self._probe_mode()
+        return {
+            "mode": "remote" if use_remote else "local",
+            "model": self.model_name,
+            "remote_url": settings.RERANKER_API_URL if use_remote else None,
+            "reranker_type": settings.RERANKER_TYPE,
+            "local_loaded": self._loaded,
+        }
 
 
-# 全局单例
 reranker = RerankerService()
+
+def _hf_dir():
+    return os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
