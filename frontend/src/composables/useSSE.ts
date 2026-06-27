@@ -2,8 +2,8 @@
  * useSSE — 管理 SSE 流式连接的 Composable
  * 支持断线重连、心跳检测、AbortController 中断
  *
- * v4.5: 使用"请求令牌"模式，done 后直接退出主循环，
- * onUnmounted 仅在流进行中才 abort，彻底消除浏览器 ERR_ABORTED。
+ * v4.5: connect() 中先 cancel 前一个 reader 再发起新请求，
+ * 彻底消除浏览器 ERR_ABORTED（根因：旧 reader 持有 HTTP 连接导致新 fetch 冲突）。
  */
 import { ref, onUnmounted } from 'vue'
 import type { SourceCitation, SSEEvent } from '@/types'
@@ -30,8 +30,9 @@ export function useSSE(options: SSEOptions = {}) {
   let retryCount = 0
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
 
-  // v4.5: 请求令牌 —— 每次 connect() 递增，doConnect 中检查令牌判断是否为当前请求
+  // v4.5: 请求令牌 + 活跃 reader 引用
   let requestToken = 0
+  let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   function resetHeartbeat() {
     if (heartbeatTimer) clearTimeout(heartbeatTimer)
@@ -48,7 +49,12 @@ export function useSSE(options: SSEOptions = {}) {
   }
 
   function abort(reason?: string) {
-    requestToken++  // v4.5: 递增令牌，让正在等待重试的旧请求自然退出
+    requestToken++
+    // v4.5: 先 cancel reader 再 abort controller，确保 HTTP 连接正确关闭
+    if (activeReader) {
+      try { activeReader.cancel() } catch { /* already cancelled */ }
+      activeReader = null
+    }
     abortController?.abort()
     abortController = null
     isStreaming.value = false
@@ -57,8 +63,15 @@ export function useSSE(options: SSEOptions = {}) {
   }
 
   async function connect(url: string, body: Record<string, unknown>) {
-    // v4.5: 递增令牌让旧请求自然退出，不调用 abort() 避免浏览器 ERR_ABORTED
+    // v4.5: 关键修复 —— 先正确关闭前一个 reader 的 HTTP 连接，再发起新请求
+    // 这才是 ERR_ABORTED 的根因：旧 reader 持有连接，新 fetch 与之冲突
     requestToken++
+    if (activeReader) {
+      try { await activeReader.cancel() } catch { /* ignore */ }
+      activeReader = null
+    }
+    abortController?.abort()
+    abortController = null
     clearHeartbeat()
 
     content.value = ''
@@ -100,21 +113,21 @@ export function useSSE(options: SSEOptions = {}) {
 
       reader = response.body?.getReader() ?? null
       if (!reader) throw new Error('无法获取响应流')
+      activeReader = reader  // v4.5: 全局引用，供 connect() cancel
 
       const decoder = new TextDecoder()
       let buffer = ''
-      let doneReceived = false  // v4.5: 收到 done/error 后标记，下一轮 reader.read() 自然结束
+      let doneReceived = false
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        // v4.5: 检查令牌 —— 如果已有新请求发起，静默退出
+        // v4.5: 检查令牌 —— 新请求已发起，退出（reader 已被 connect() cancel）
         if (myToken !== requestToken) {
           return
         }
 
-        // v4.5: done 后不再重置心跳（流即将结束）
         if (!doneReceived) {
           resetHeartbeat()
         }
@@ -171,7 +184,6 @@ export function useSSE(options: SSEOptions = {}) {
                   console.warn('[SSE] 忠实度警告:', event.data)
                   try {
                     const warnData = JSON.parse(event.data)
-                    // v4.5: 重试时清空已显示的原始答案，避免拼接重复
                     if (warnData.clear_content) {
                       content.value = ''
                     }
@@ -186,9 +198,6 @@ export function useSSE(options: SSEOptions = {}) {
             } catch { /* 非 JSON 行 */ }
           }
         }
-
-        // v4.5: 收到 done/error 后，继续读取直到服务器关闭连接（reader.read() 返回 done=true）
-        // 不再使用 shouldConsumeRest 内层循环，避免与新的 fetch 请求产生竞争
       }
 
       // 流自然结束
@@ -217,14 +226,16 @@ export function useSSE(options: SSEOptions = {}) {
       clearHeartbeat()
       abortController = null
     } finally {
-      // v4.5: 确保 reader 始终被释放
+      // v4.5: 释放 reader 锁，清除全局引用
       if (reader) {
         try { reader.releaseLock() } catch { /* already released */ }
+      }
+      if (activeReader === reader) {
+        activeReader = null
       }
     }
   }
 
-  // v4.5: 仅在流进行中才 abort，避免组件卸载时误 abort 已完成的请求
   onUnmounted(() => {
     if (isStreaming.value) {
       abort()

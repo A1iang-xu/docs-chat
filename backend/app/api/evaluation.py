@@ -27,6 +27,12 @@ class EvalRequest(BaseModel):
     library: Optional[str] = None       # 指定评估的文档库
 
 
+class GenerateDatasetRequest(BaseModel):
+    """v4.5: 自动生成评估数据集请求"""
+    library: Optional[str] = None       # 指定文档库（None 则全库采样）
+    num_queries: int = 10               # 生成问题数量
+
+
 class EvalResponse(BaseModel):
     """评估响应模型"""
     status: str
@@ -34,6 +40,34 @@ class EvalResponse(BaseModel):
     total_evaluated: int
     total_errors: int
     avg_scores: dict
+
+
+@router.post("/generate-dataset")
+async def generate_dataset(request: GenerateDatasetRequest):
+    """v4.5: 根据已有知识库内容自动生成评估数据集。
+
+    从向量库中采样 chunks，用 LLM 为每个 chunk 生成测试问题和期望关键词。
+    生成后保存为 eval_dataset.json，可直接用于 POST /evaluation/run。
+    """
+    if not settings.EVALUATION_ENABLED:
+        raise HTTPException(status_code=403, detail="评估功能未启用")
+
+    try:
+        dataset = await evaluation_service.generate_dataset_from_knowledge_base(
+            library=request.library,
+            num_queries=request.num_queries,
+        )
+        return {
+            "status": "completed",
+            "total_queries": len(dataset),
+            "message": f"已生成 {len(dataset)} 条评估查询",
+            "dataset": dataset,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("数据集生成失败: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"数据集生成失败: {exc}")
 
 
 @router.post("/run", response_model=EvalResponse)

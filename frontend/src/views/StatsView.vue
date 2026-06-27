@@ -58,6 +58,8 @@ const error = ref('')
 const autoRefresh = ref(true)
 const isRunningEvaluation = ref(false)
 const evalError = ref('')
+const isGeneratingDataset = ref(false)
+const datasetResult = ref<string | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
 // 从 dict 或 number 中提取 pipeline 阶段的延迟值
@@ -109,14 +111,30 @@ const runEvaluation = async () => {
   isRunningEvaluation.value = true
   evalError.value = ''
   try {
-    const res = await api.post('/evaluation/run', {}, { timeout: 120_000 })
+    const res = await api.post('/evaluation/run', {}, { timeout: 300_000 })
     evaluationResult.value = res.data
-    // 刷新历史
     fetchEvaluationHistory()
   } catch (e: any) {
     evalError.value = e.response?.data?.detail || e.message || '评估执行失败'
   } finally {
     isRunningEvaluation.value = false
+  }
+}
+
+// v4.5: 根据知识库自动生成评估数据集
+const generateDataset = async () => {
+  isGeneratingDataset.value = true
+  evalError.value = ''
+  datasetResult.value = null
+  try {
+    const res = await api.post('/evaluation/generate-dataset', {
+      num_queries: 10,
+    }, { timeout: 300_000 })
+    datasetResult.value = `已生成 ${res.data.total_queries} 条评估查询，可点击"运行评估"`
+  } catch (e: any) {
+    evalError.value = e.response?.data?.detail || e.message || '数据集生成失败'
+  } finally {
+    isGeneratingDataset.value = false
   }
 }
 
@@ -303,13 +321,26 @@ onUnmounted(() => {
     <div class="chart-section evaluation-panel">
       <div class="eval-header">
         <h3>RAGAS 质量评估</h3>
-        <button
-          class="eval-btn"
-          :disabled="isRunningEvaluation"
-          @click="runEvaluation"
-        >
-          {{ isRunningEvaluation ? '评估中...' : '运行评估' }}
-        </button>
+        <div class="eval-actions">
+          <button
+            class="eval-btn secondary"
+            :disabled="isGeneratingDataset"
+            @click="generateDataset"
+            title="从已有知识库内容自动生成评估测试问题"
+          >
+            {{ isGeneratingDataset ? '生成中...' : '生成数据集' }}
+          </button>
+          <button
+            class="eval-btn"
+            :disabled="isRunningEvaluation"
+            @click="runEvaluation"
+          >
+            {{ isRunningEvaluation ? '评估中...' : '运行评估' }}
+          </button>
+        </div>
+      </div>
+      <div v-if="datasetResult" class="dataset-result">
+        {{ datasetResult }}
       </div>
       <div v-if="evalError" class="eval-error">{{ evalError }}</div>
 
@@ -664,6 +695,11 @@ onUnmounted(() => {
   margin: 0;
 }
 
+.eval-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .eval-btn {
   padding: 6px 16px;
   background: var(--accent);
@@ -675,6 +711,12 @@ onUnmounted(() => {
   transition: opacity 0.2s;
 }
 
+.eval-btn.secondary {
+  background: var(--bg);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
 .eval-btn:hover:not(:disabled) {
   opacity: 0.9;
 }
@@ -682,6 +724,16 @@ onUnmounted(() => {
 .eval-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.dataset-result {
+  padding: 8px 12px;
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid var(--accent2);
+  border-radius: 4px;
+  color: var(--accent2);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
 }
 
 .eval-error {

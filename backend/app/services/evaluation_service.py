@@ -212,5 +212,77 @@ class EvaluationService:
             return json.loads(latest.read_text(encoding="utf-8"))
         return None
 
+    async def generate_dataset_from_knowledge_base(
+        self,
+        library: str | None = None,
+        num_queries: int = 10,
+    ) -> list[dict]:
+        """v4.5: 根据已有知识库内容自动生成评估数据集。
+
+        从向量库中采样 chunks，用 LLM 为每个 chunk 生成测试问题和期望关键词。
+        """
+        from app.services.vector_store import vector_store
+
+        all_chunks = vector_store.get_all_chunks()
+        if library:
+            all_chunks = [c for c in all_chunks if c.get("library", "") == library]
+
+        if not all_chunks:
+            raise ValueError("知识库为空，无法生成评估数据集")
+
+        # 按文档分组，均匀采样
+        import random
+        random.seed(42)
+        sample_size = min(num_queries, len(all_chunks))
+        sampled = random.sample(all_chunks, sample_size)
+
+        dataset = []
+        for chunk in sampled:
+            content = chunk.get("content", "")[:1500]
+            doc_name = chunk.get("document_name", "未知文档")
+
+            prompt = (
+                "请根据以下文档片段，生成一个用于 RAG 系统评估的测试问题。\n"
+                "要求：\n"
+                "1. 问题应该能从该文档片段中找到答案\n"
+                "2. 问题应该是具体、可验证的\n"
+                "3. 同时提供 3-5 个期望关键词（答案中应包含的关键概念）\n\n"
+                "请以 JSON 格式输出，格式为：\n"
+                '{"query": "问题内容", "expected_keywords": ["关键词1", "关键词2"]}\n\n'
+                f"文档来源: {doc_name}\n"
+                f"文档片段:\n{content}"
+            )
+
+            try:
+                result = await llm_service.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    system_prompt="你是一个测试数据生成器。只输出 JSON，不要额外解释。",
+                )
+
+                # 提取 JSON
+                result = result.strip()
+                if result.startswith("```"):
+                    result = result.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+                item = json.loads(result)
+                item["source_doc"] = doc_name
+                item["source_chunk_id"] = chunk.get("chunk_id", "")
+                dataset.append(item)
+            except Exception as exc:
+                logger.warning("生成测试问题失败 (%s): %s", doc_name, exc)
+                continue
+
+        # 持久化到数据集文件
+        dataset_path = Path(settings.EVALUATION_DATASET_PATH)
+        if not dataset_path.is_absolute():
+            dataset_path = Path(settings.PROJECT_ROOT) / dataset_path
+        dataset_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_path.write_text(
+            json.dumps(dataset, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("评估数据集已生成: %d 条查询 → %s", len(dataset), dataset_path)
+        return dataset
+
 
 evaluation_service = EvaluationService()
