@@ -38,7 +38,7 @@ const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const libraryStore = useLibraryStore()  // v4.0
 
-const { content, sources, isStreaming, error, connect, abort, stage, stageLabel, faithfulnessWarning } = useSSE({
+const { content, sources, isStreaming, error, connect, abort, stage, stageLabel, faithfulnessWarning, cacheHit } = useSSE({
   maxRetries: 2,
   retryBaseMs: 1000,
   heartbeatTimeoutMs: 30_000,
@@ -115,10 +115,18 @@ async function handleSend(text: string) {
   await nextTick()
   scrollToBottom()
 
+  // v4.1: 构建多轮对话历史（最近6条消息）
+  const allMsgs = messageStore.getMessages(convId)
+  const history = allMsgs
+    .filter((m) => m.id !== assistantMsgId.value)
+    .slice(-6)
+    .map((m) => ({ role: m.role, content: m.content }))
+
   await connect(`${API_BASE}/chat/stream`, {
     conversation_id: convId,
     content: text,
     library: libraryStore.selectedLibrary,  // v4.0
+    history,  // v4.1: 多轮对话历史
   })
 
   isSending.value = false
@@ -278,6 +286,10 @@ onMounted(() => {
             <span class="stage-dot"></span>
             <span class="stage-text">{{ stageLabel }}</span>
           </div>
+          <!-- v4.4: 缓存命中提示 -->
+          <div v-if="cacheHit && isStreaming" class="cache-hit-badge">
+            ⚡ 缓存命中
+          </div>
           <!-- v4.4: 忠实度警告提示条 -->
           <div v-if="faithfulnessWarning" class="faithfulness-warning">
             {{ faithfulnessWarning }}
@@ -426,6 +438,19 @@ onMounted(() => {
   margin: 8px 0;
   font-size: 0.8rem;
   color: #d29922;
+}
+
+/* v4.4: 缓存命中提示 */
+.cache-hit-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid var(--accent2);
+  border-radius: 12px;
+  margin: 8px 0;
+  font-size: 0.78rem;
+  color: var(--accent2);
+  font-weight: 600;
 }
 
 /* 空状态 */

@@ -56,8 +56,10 @@ export interface Message {
 }
 
 export interface MessageCreate {
-  conversationId: string
+  conversation_id: string
   content: string
+  library?: string | null
+  history?: Array<{ role: MessageRole; content: string }>  // v4.1: 多轮对话历史
 }
 
 // ═══════════════════════════════════════════
@@ -92,7 +94,7 @@ export interface DocumentJob {
 // SSE 事件
 // ═══════════════════════════════════════════
 
-export type SSEEventType = 'token' | 'source' | 'done' | 'error' | 'cache' | 'faithfulness_warning'
+export type SSEEventType = 'token' | 'source' | 'done' | 'error' | 'cache' | 'faithfulness_warning' | 'stage'
 
 export interface SSEEvent {
   event: SSEEventType

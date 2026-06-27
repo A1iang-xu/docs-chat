@@ -1,14 +1,19 @@
-"""Reranker 重排序服务 —— 在混合检索后对结果做精排
-
+"""
 架构要求: Qwen3-Reranker-0.6B (RERANKER_TYPE=qwen) 远程模式,
           BGE-Reranker-v2-m3 (RERANKER_TYPE=fallback) 本地 CrossEncoder 降级。
 本地模型缓存: HuggingFace 默认 ~/.cache/huggingface/hub/ (可通过 HF_HOME 修改)。
+v4.5: 设置 HF_HUB_OFFLINE=1 强制离线模式，避免 HuggingFace 网络超时。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+
+# v4.5: 强制 HuggingFace 离线模式，避免网络超时
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 from typing import List
 
 from sentence_transformers import CrossEncoder
@@ -125,6 +130,14 @@ class RerankerService:
 
     def _lazy_load(self):
         if not self._loaded:
+            # v4.5: 检查模型是否已缓存本地，避免 HuggingFace 网络超时
+            model_path = _hf_dir()
+            import os
+            model_dir = os.path.join(model_path, "models--" + self.model_name.replace("/", "--"))
+            if not os.path.exists(model_dir):
+                logger.warning("reranker 模型未缓存本地 (%s), 跳过 reranker (HuggingFace 可能不可达)", self.model_name)
+                raise FileNotFoundError(f"模型 {self.model_name} 未缓存本地，且 HuggingFace 不可达")
+
             logger.info("loading local reranker: %s (cache: %s)", self.model_name, _hf_dir())
             try:
                 self.model = CrossEncoder(self.model_name, max_length=settings.RERANKER_MAX_LENGTH)

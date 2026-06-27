@@ -63,7 +63,10 @@ async def chat_stream(request: Request, body: MessageCreate, rag: bool = Query(d
                 if rag and vector_store.get_chunk_count() > 0:
                     # ── RAG 模式 ──
                     async for chunk in rag_service.chat_stream(
-                        query=body.content, user_id=user_id, library=body.library
+                        query=body.content,
+                        history=body.history or None,  # v4.1: 传递多轮对话历史
+                        user_id=user_id,
+                        library=body.library,
                     ):
                         if await request.is_disconnected():
                             break
@@ -77,6 +80,13 @@ async def chat_stream(request: Request, body: MessageCreate, rag: bool = Query(d
                         elif chunk["type"] == "cache":
                             event = SSEEvent(event="cache", data=chunk["data"])
                             yield f"data: {event.model_dump_json()}\n\n"
+                        elif chunk["type"] == "stage":
+                            # v4.4: 转发阶段事件 (retrieving/generating/faithfulness_check/complete)
+                            event = SSEEvent(event="stage", data=chunk["data"])
+                            yield f"data: {event.model_dump_json()}\n\n"
+                        elif chunk["type"] == "perf":
+                            # v4.0: 性能指标事件（前端不需要展示，静默丢弃）
+                            pass
                         elif chunk["type"] == "done":
                             done_event = SSEEvent(event="done", data="")
                             yield f"data: {done_event.model_dump_json()}\n\n"

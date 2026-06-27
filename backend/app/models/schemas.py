@@ -25,9 +25,10 @@ class Conversation(BaseModel):
 # ═══════════════════════════════════════════
 
 class MessageCreate(BaseModel):
-    conversation_id: str
+    conversation_id: str = ""  # v4.5: 改为可选，避免前端未传时 422
     content: str = Field(..., min_length=1, max_length=10000)
     library: Optional[str] = None  # v4.0: 库过滤
+    history: list[dict] = Field(default_factory=list)  # v4.1: 多轮对话历史
 
 
 class SourceCitation(BaseModel):
@@ -85,7 +86,7 @@ class DocumentJob(BaseModel):
 
 class SSEEvent(BaseModel):
     """SSE 流式响应的单次事件"""
-    event: Literal["token", "source", "done", "error", "cache", "faithfulness_warning"]
+    event: Literal["token", "source", "done", "error", "cache", "faithfulness_warning", "stage"]
     data: str
 
 
@@ -124,7 +125,7 @@ class LibraryInfo(BaseModel):
 class FeedbackRequest(BaseModel):
     """用户对答案的反馈"""
     message_id: str = Field(..., min_length=1)
-    query: str = Field(..., min_length=1)
+    query: str = Field(default="")  # v4.5: 允许空（前端可能未持久化原始查询）
     answer: str = Field(..., min_length=1)
     sources: list[dict] = Field(default_factory=list)
     feedback: Literal["positive", "negative"]

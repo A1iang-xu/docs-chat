@@ -116,6 +116,16 @@ class IngestionService:
 
                 self._mark(state, JobStatus.READY)
                 logger.info("文档摄取完成: %s chunks=%s", state.filename, state.chunk_count)
+
+                # v4.5: 文档入库后失效缓存，避免返回陈旧答案
+                try:
+                    from app.services.cache_service import cache_service
+                    cache_service.invalidate()
+                    from app.services.semantic_cache import semantic_cache
+                    await semantic_cache.clear()
+                    logger.info("缓存已失效 (文档入库触发)")
+                except Exception as cache_exc:
+                    logger.warning("缓存失效失败 (非致命): %s", cache_exc)
             except Exception as exc:
                 logger.exception("文档摄取失败: job_id=%s filename=%s", job_id, state.filename)
                 state.error = str(exc)

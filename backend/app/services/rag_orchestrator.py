@@ -68,8 +68,8 @@ class RAGOrchestrator:
             yield {"type": "cache", "data": json.dumps({"hit": True, "similarity": 1.0, "layer": "L1"})}
             yield {"type": "source", "data": json.dumps(l1_hit["sources"], ensure_ascii=False)}
             yield {"type": "token", "data": l1_hit["answer"]}
-            yield {"type": "done", "data": ""}
             yield self._perf("pipeline", t0)
+            yield {"type": "done", "data": ""}
             return
 
         # ── v3.3: 查询分类路由（v4.1: 返回 dict） ──
@@ -97,8 +97,8 @@ class RAGOrchestrator:
             yield {"type": "cache", "data": json.dumps({"hit": True, "similarity": cache_hit.similarity})}
             yield {"type": "source", "data": json.dumps(cache_hit.sources, ensure_ascii=False)}
             yield {"type": "token", "data": cache_hit.answer}
-            yield {"type": "done", "data": ""}
             yield self._perf("pipeline", t0)
+            yield {"type": "done", "data": ""}
             return
 
         # v4.0: cache miss counter
@@ -299,8 +299,8 @@ class RAGOrchestrator:
                 metrics_service.record_faithfulness_warning()
         # v4.4: stage 事件 —— 完成
         yield {"type": "stage", "data": json.dumps({"stage": "complete", "label": "已完成"})}
-        yield {"type": "done", "data": ""}
         yield self._perf("pipeline", t0)
+        yield {"type": "done", "data": ""}
 
     async def _parallel_retrieve(
         self,
@@ -382,6 +382,7 @@ class RAGOrchestrator:
             events.append({"type": "faithfulness_warning", "data": json.dumps({
                 "flagged_sentences": len(flagged),
                 "retrying": True,
+                "clear_content": True,  # v4.5: 通知前端清空已显示的原始答案
                 "attempt": attempt + 1,
             }, ensure_ascii=False)})
 

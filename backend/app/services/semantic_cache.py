@@ -250,6 +250,25 @@ class SemanticCache:
             return
         await asyncio.to_thread(self._store_sync, query, answer, sources)
 
+    async def clear(self) -> int:
+        """v4.5: 清空语义缓存（文档更新时调用）。
+
+        Returns: 被清除的条目数
+        """
+        count = len(self._warm_cache)
+        self._warm_cache.clear()
+        self._faiss_texts.clear()
+        self._faiss_index = None
+        self._warmed_up = False
+        try:
+            if self.collection.count() > 0:
+                self.collection.delete(where={})
+                count = max(count, 1)
+            logger.info("语义缓存已清空")
+        except Exception as exc:
+            logger.warning("语义缓存清空失败: %s", exc)
+        return count
+
     def _store_sync(self, query: str, answer: str, sources: list[dict]) -> None:
         cache_id = uuid4().hex
         now = time.time()

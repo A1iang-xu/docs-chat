@@ -71,6 +71,12 @@ class MetricsService:
     def get_stats(self) -> dict:
         with self._lock:
             stages = list(self._latencies.keys())
+            # v4.5: 补充前端 StatsView 期望的字段
+            from app.services.vector_store import vector_store as _vs
+            try:
+                libraries = _vs.get_libraries()
+            except Exception:
+                libraries = []
             return {
                 "latency_p50": {s: self._p50(s) for s in stages},
                 "latency_p95": {s: self._p95(s) for s in stages},
@@ -90,6 +96,11 @@ class MetricsService:
                 "avg_generate_ms": round(
                     self.total_generate_ms / max(self.total_queries, 1), 1
                 ),
+                # v4.5: 前端期望的独立计数字段
+                "cache_hits": self.cache_hits,
+                "cache_misses": self.cache_misses,
+                "faithfulness_warnings": self.faithfulness_warnings,
+                "libraries": libraries,
             }
 
 
