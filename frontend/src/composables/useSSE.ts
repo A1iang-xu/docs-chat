@@ -2,8 +2,8 @@
  * useSSE — 管理 SSE 流式连接的 Composable
  * 支持断线重连、心跳检测、AbortController 中断
  *
- * v4.5: 使用"请求令牌"模式 + finally 块确保 reader 正确释放，
- * 彻底消除浏览器 ERR_ABORTED 网络错误。
+ * v4.5: 使用"请求令牌"模式，done 后直接退出主循环，
+ * onUnmounted 仅在流进行中才 abort，彻底消除浏览器 ERR_ABORTED。
  */
 import { ref, onUnmounted } from 'vue'
 import type { SourceCitation, SSEEvent } from '@/types'
@@ -78,9 +78,7 @@ export function useSSE(options: SSEOptions = {}) {
     const myController = new AbortController()
     abortController = myController
 
-    // v4.5: 用 finally 块确保 reader 始终被正确释放
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
-    let shouldConsumeRest = false
 
     try {
       resetHeartbeat()
@@ -105,6 +103,7 @@ export function useSSE(options: SSEOptions = {}) {
 
       const decoder = new TextDecoder()
       let buffer = ''
+      let doneReceived = false  // v4.5: 收到 done/error 后标记，下一轮 reader.read() 自然结束
 
       while (true) {
         const { done, value } = await reader.read()
@@ -112,11 +111,14 @@ export function useSSE(options: SSEOptions = {}) {
 
         // v4.5: 检查令牌 —— 如果已有新请求发起，静默退出
         if (myToken !== requestToken) {
-          shouldConsumeRest = false
           return
         }
 
-        resetHeartbeat()
+        // v4.5: done 后不再重置心跳（流即将结束）
+        if (!doneReceived) {
+          resetHeartbeat()
+        }
+
         buffer += decoder.decode(value, { stream: true })
 
         const lines = buffer.split('\n')
@@ -144,9 +146,8 @@ export function useSSE(options: SSEOptions = {}) {
                     clearHeartbeat()
                     abortController = null
                   }
-                  // v4.5: 标记需要消费剩余流数据，让服务器正常关闭连接
-                  shouldConsumeRest = true
-                  break // break switch, 继续消费剩余数据
+                  doneReceived = true
+                  break
                 case 'error':
                   if (myToken === requestToken) {
                     error.value = event.data
@@ -154,7 +155,7 @@ export function useSSE(options: SSEOptions = {}) {
                     clearHeartbeat()
                     abortController = null
                   }
-                  shouldConsumeRest = true
+                  doneReceived = true
                   break
                 case 'cache':
                   cacheHit.value = true
@@ -186,18 +187,8 @@ export function useSSE(options: SSEOptions = {}) {
           }
         }
 
-        // v4.5: 收到 done/error 后，消费剩余流数据直到服务器关闭连接
-        if (shouldConsumeRest) {
-          try {
-            while (true) {
-              const { done: restDone } = await reader.read()
-              if (restDone) break
-            }
-          } catch {
-            // 忽略消费剩余数据时的错误
-          }
-          break
-        }
+        // v4.5: 收到 done/error 后，继续读取直到服务器关闭连接（reader.read() 返回 done=true）
+        // 不再使用 shouldConsumeRest 内层循环，避免与新的 fetch 请求产生竞争
       }
 
       // 流自然结束
@@ -226,15 +217,18 @@ export function useSSE(options: SSEOptions = {}) {
       clearHeartbeat()
       abortController = null
     } finally {
-      // v4.5: 确保 reader 始终被释放，避免浏览器 ERR_ABORTED
+      // v4.5: 确保 reader 始终被释放
       if (reader) {
         try { reader.releaseLock() } catch { /* already released */ }
       }
     }
   }
 
+  // v4.5: 仅在流进行中才 abort，避免组件卸载时误 abort 已完成的请求
   onUnmounted(() => {
-    abort()
+    if (isStreaming.value) {
+      abort()
+    }
   })
 
   return { content, sources, isStreaming, error, cacheHit, stage, stageLabel, faithfulnessWarning, connect, abort }

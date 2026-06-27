@@ -94,8 +94,10 @@ const fetchFeedbackStats = async () => {
 const fetchLatestEvaluation = async () => {
   try {
     const res = await api.get('/evaluation/latest')
-    if (res.data) {
+    if (res.data && res.data.status !== 'empty') {
       evaluationResult.value = res.data
+    } else {
+      evaluationResult.value = null
     }
   } catch {
     // 尚无评估记录时静默

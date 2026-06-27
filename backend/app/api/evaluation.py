@@ -86,10 +86,10 @@ async def run_evaluation(request: EvalRequest):
 
 @router.get("/latest")
 async def get_latest_report():
-    """获取最新的评估报告。"""
+    """获取最新的评估报告。无数据时返回 200 + null，避免前端拦截器打印错误。"""
     report = evaluation_service.get_latest_report()
     if report is None:
-        raise HTTPException(status_code=404, detail="暂无评估报告，请先运行 POST /evaluation/run")
+        return {"status": "empty", "message": "暂无评估报告，请先运行评估"}
     return report
 
 
