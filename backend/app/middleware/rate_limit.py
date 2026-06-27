@@ -27,6 +27,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/favicon.ico",
     }
 
+    # v4.5: GET 只读端点不限流（监控面板自动刷新不应被限流）
+    _SKIP_GET_PREFIXES = (
+        "/stats",
+        "/feedback/stats",
+        "/evaluation/latest",
+        "/evaluation/history",
+        "/documents/jobs",
+        "/documents/status",
+        "/libraries",
+    )
+
     def __init__(self, app):
         super().__init__(app)
         self._requests: dict[str, deque[float]] = defaultdict(deque)
@@ -40,6 +51,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 跳过健康检查等端点
         if request.url.path in self._SKIP_PATHS:
             return await call_next(request)
+
+        # v4.5: GET 只读端点跳过限流（监控面板自动刷新不应被限流）
+        if request.method == "GET":
+            for prefix in self._SKIP_GET_PREFIXES:
+                if request.url.path.startswith(prefix):
+                    return await call_next(request)
 
         # 获取客户端 IP（支持代理转发）
         client_ip = request.client.host if request.client else "unknown"

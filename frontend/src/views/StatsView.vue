@@ -110,6 +110,10 @@ const fetchLatestEvaluation = async () => {
 const runEvaluation = async () => {
   isRunningEvaluation.value = true
   evalError.value = ''
+  // v4.5: 评估期间暂停自动刷新，避免速率限制
+  const wasAutoRefresh = autoRefresh.value
+  autoRefresh.value = false
+  if (timer) { clearInterval(timer); timer = null }
   try {
     const res = await api.post('/evaluation/run', {}, { timeout: 300_000 })
     evaluationResult.value = res.data
@@ -118,6 +122,11 @@ const runEvaluation = async () => {
     evalError.value = e.response?.data?.detail || e.message || '评估执行失败'
   } finally {
     isRunningEvaluation.value = false
+    // 恢复自动刷新
+    if (wasAutoRefresh) {
+      autoRefresh.value = true
+      timer = setInterval(fetchStats, 5000)
+    }
   }
 }
 
@@ -126,6 +135,10 @@ const generateDataset = async () => {
   isGeneratingDataset.value = true
   evalError.value = ''
   datasetResult.value = null
+  // v4.5: 生成期间暂停自动刷新，避免速率限制
+  const wasAutoRefresh = autoRefresh.value
+  autoRefresh.value = false
+  if (timer) { clearInterval(timer); timer = null }
   try {
     const res = await api.post('/evaluation/generate-dataset', {
       num_queries: 10,
@@ -135,6 +148,11 @@ const generateDataset = async () => {
     evalError.value = e.response?.data?.detail || e.message || '数据集生成失败'
   } finally {
     isGeneratingDataset.value = false
+    // 恢复自动刷新
+    if (wasAutoRefresh) {
+      autoRefresh.value = true
+      timer = setInterval(fetchStats, 5000)
+    }
   }
 }
 

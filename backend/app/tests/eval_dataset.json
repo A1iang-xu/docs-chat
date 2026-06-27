@@ -1,0 +1,119 @@
+[
+  {
+    "query": "Vue3 中 Composition API 的 setup 函数可以返回哪些类型的值？",
+    "expected_keywords": [
+      "setup",
+      "返回对象",
+      "返回函数",
+      "模板",
+      "直接渲染"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "2ce9483d29a9a550f29619454975890b"
+  },
+  {
+    "query": "在Vue3项目创建过程中，通过命令行交互式选择时，哪些选项被明确选择为“是”？",
+    "expected_keywords": [
+      "TypeScript语法",
+      "ESLint",
+      "Vue Router",
+      "Pinia",
+      "Vitest"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "b8cc53b1b015564a3a9108de5f778008"
+  },
+  {
+    "query": "在Vue3中，如何在子组件中接收父组件传递的props并限定其类型？",
+    "expected_keywords": [
+      "defineProps",
+      "类型限定",
+      "父组件传值",
+      "Vue3",
+      "props"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "4d267964fe96d325b5b492d8edcc35e1"
+  },
+  {
+    "query": "在Vue3中，父组件如何通过props属性给子组件赋值？",
+    "expected_keywords": [
+      "props",
+      "父组件",
+      "子组件",
+      "赋值",
+      "Vue3"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "4740f971c8764456beafedf9195e5373"
+  },
+  {
+    "query": "在Vue3中，ref属性如何用于绑定DOM元素和响应式变量？",
+    "expected_keywords": [
+      "ref属性",
+      "DOM元素",
+      "响应式变量",
+      "RefImpl",
+      "ref对象"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "f15334f45518702c4cf232d4c5d3b4d3"
+  },
+  {
+    "query": "在Vue3的CompositionAPI中，setup函数相比选项式API有哪些优势？",
+    "expected_keywords": [
+      "CompositionAPI",
+      "setup",
+      "不需要处理this",
+      "灵活",
+      "单独ts文件"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "69d71771a1637499b2f2480dab516cea"
+  },
+  {
+    "query": "在Vue3的News2组件模板中，导航区使用了哪个CSS类？",
+    "expected_keywords": [
+      "news",
+      "导航区",
+      "CSS类"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "3b7783d376dd2bb0328dc356f90233ec"
+  },
+  {
+    "query": "在Vue3中，组件模板是否必须有一个唯一的根元素？",
+    "expected_keywords": [
+      "Vue3",
+      "组件",
+      "模板",
+      "根元素",
+      "唯一"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "81f080c19d3bb9af6815ad6c79f1a2f3"
+  },
+  {
+    "query": "在Vue3中，如何使用router-link实现基于路径和基于命名路由的页面跳转？",
+    "expected_keywords": [
+      "router-link",
+      "路径跳转",
+      "命名跳转",
+      "replace"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "156ae2741a9b645fd82c2e6210b16424"
+  },
+  {
+    "query": "在Vue3的Pinia store中，如何定义一个用于更新用户名且长度限制在10个字符以内的action？",
+    "expected_keywords": [
+      "defineStore",
+      "reactive",
+      "changeUsername",
+      "action",
+      "Pinia"
+    ],
+    "source_doc": "Vue3快速上手_笔记.pdf",
+    "source_chunk_id": "25c54e183c7fd1960babdd7499ea2e58"
+  }
+]
