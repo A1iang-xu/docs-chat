@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import AsyncGenerator, Sequence
 
@@ -495,6 +496,10 @@ class RAGOrchestrator:
     async def _rerank(self, query: str, docs: list[dict], top_k: int) -> list[dict]:
         if not docs:
             return []
+        # v4.5: reranker 同步调用阻塞线程池，默认跳过，使用 RRF 分数排序
+        # 如需启用，设置环境变量 RERANKER_ENABLED=true
+        if not os.environ.get("RERANKER_ENABLED", "false").lower() == "true":
+            return docs[:top_k]
         try:
             from app.services.reranker_service import reranker
             return await asyncio.to_thread(reranker.rerank, query, docs, top_k)

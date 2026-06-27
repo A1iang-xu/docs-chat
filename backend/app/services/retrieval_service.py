@@ -98,7 +98,7 @@ class RetrievalService:
         self,
         query: str,
         top_k: int | None = None,
-        use_reranker: bool = True,
+        use_reranker: bool = False,  # v4.5: 默认禁用 reranker（同步调用阻塞线程池）
         expand_neighbors: bool | None = None,
         library: str | None = None,
         query_type: str | None = None,  # v4.5: 自适应权重
