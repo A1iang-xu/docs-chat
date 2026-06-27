@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -62,8 +63,9 @@ class EvaluationService:
             logger.info("评估进度: %d/%d — %s", i + 1, len(dataset), query[:50])
 
             try:
-                # 检索
-                docs = retrieval_service.search(
+                # 检索（v4.5: 用 asyncio.to_thread 避免同步调用阻塞事件循环）
+                docs = await asyncio.to_thread(
+                    retrieval_service.search,
                     query, settings.RETRIEVAL_TOP_K, True,
                     expand_neighbors=True, library=library,
                 )
