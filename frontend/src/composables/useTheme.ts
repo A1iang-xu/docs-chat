@@ -31,7 +31,7 @@ function resolveTheme(mode: ThemeMode): 'dark' | 'light' {
 }
 
 function applyTheme(theme: 'dark' | 'light') {
-  document.documentElement.setAttribute('data-theme', theme)
+  document.documentElement.classList.toggle('dark', theme === 'dark')
 }
 
 // 监听系统主题变化（当 mode=system 时）

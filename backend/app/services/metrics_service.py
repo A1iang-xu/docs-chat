@@ -71,12 +71,14 @@ class MetricsService:
     def get_stats(self) -> dict:
         with self._lock:
             stages = list(self._latencies.keys())
-            # v4.5: 补充前端 StatsView 期望的字段
+            # v4.5: 补充前端 DashboardView 期望的字段
             from app.services.vector_store import vector_store as _vs
             try:
                 libraries = _vs.get_libraries()
+                documents = _vs.get_unique_documents()
             except Exception:
                 libraries = []
+                documents = []
             return {
                 "latency_p50": {s: self._p50(s) for s in stages},
                 "latency_p95": {s: self._p95(s) for s in stages},
@@ -101,6 +103,7 @@ class MetricsService:
                 "cache_misses": self.cache_misses,
                 "faithfulness_warnings": self.faithfulness_warnings,
                 "libraries": libraries,
+                "documents": documents,
             }
 
 

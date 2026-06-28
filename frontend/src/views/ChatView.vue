@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue'
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { useConversationStore } from '@/stores/conversation'
@@ -29,8 +29,6 @@ const sidebarOpen = ref(false)
 
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
-  // 通过事件通知侧边栏组件
-  // 或使用 provide/inject
 }
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -38,7 +36,7 @@ const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const libraryStore = useLibraryStore()  // v4.0
 
-const { content, sources, isStreaming, error, connect, abort, stage, stageLabel, faithfulnessWarning, cacheHit } = useSSE({
+const { content, sources, isStreaming, error, connect, abort, stageLabel, faithfulnessWarning, cacheHit } = useSSE({
   maxRetries: 2,
   retryBaseMs: 1000,
   heartbeatTimeoutMs: 30_000,
@@ -139,7 +137,7 @@ watch(
   (newReplay) => {
     if (newReplay) {
       if (newReplay.library) {
-        libraryStore.setSelectedLibrary(newReplay.library)
+        libraryStore.setSelected(newReplay.library)
       }
       handleSend(newReplay.query)
       emit('replay-consumed')
@@ -206,7 +204,7 @@ onMounted(() => {
 
 <template>
   <div class="chat-layout">
-    <ConversationSidebar />
+    <ConversationSidebar v-model:mobile-open="sidebarOpen" />
 
     <main class="chat-main">
       <ErrorBoundary>

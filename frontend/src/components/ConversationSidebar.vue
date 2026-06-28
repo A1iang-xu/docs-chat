@@ -2,8 +2,11 @@
 import { useConversationStore } from '@/stores/conversation'
 import type { Conversation } from '@/types'
 import { ref, onMounted, onUnmounted } from 'vue'
+
+const props = defineProps<{ mobileOpen?: boolean }>()
+const emit = defineEmits<{ (e: 'update:mobileOpen', v: boolean): void }>()
+
 const conversationStore = useConversationStore()
-const isMobileOpen = ref(false)
 const isMobile = ref(false)
 
 function handleNewChat() {
@@ -12,14 +15,15 @@ function handleNewChat() {
 
 function handleSelect(id: string) {
   conversationStore.setActive(id)
+  if (isMobile.value) {
+    emit('update:mobileOpen', false)
+  }
 }
+
 function checkMobile() {
   isMobile.value = window.innerWidth < 768
 }
 
-function toggleSidebar() {
-  isMobileOpen.value = !isMobileOpen.value
-}
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
@@ -31,7 +35,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="sidebar" :class="{ 'mobile-open': isMobileOpen, 'mobile-hidden': isMobile && !isMobileOpen }">
+  <aside class="sidebar" :class="{ 'mobile-open': props.mobileOpen, 'mobile-hidden': isMobile && !props.mobileOpen }">
     <button class="new-chat-btn" @click="handleNewChat">
       + 新建对话
     </button>
