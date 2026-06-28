@@ -148,6 +148,10 @@ export function useSSE(options: SSEOptions = {}) {
                 case 'token':
                   content.value += event.data
                   break
+                case 'replace':
+                  // v4.5: 后端重新编号/后处理后的完整回答，替换当前内容
+                  content.value = event.data
+                  break
                 case 'source':
                   sources.value = JSON.parse(event.data) as SourceCitation[]
                   break

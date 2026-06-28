@@ -321,6 +321,7 @@ onMounted(() => {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  background: var(--background);
 }
 .chat-main {
   flex: 1;
@@ -334,8 +335,8 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.65rem 1.5rem;
-  border-bottom: 1px solid var(--rule);
-  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
 }
 .header-left {
   display: flex;
@@ -345,14 +346,14 @@ onMounted(() => {
 .header-left h2 {
   font-size: 1rem;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--foreground);
 }
 .doc-badge {
   font-size: 0.75rem;
-  color: var(--accent2);
-  background: rgba(63, 185, 80, 0.1);
+  color: var(--success-text);
+  background: var(--success-subtle);
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 600;
 }
 .header-right {
@@ -363,16 +364,16 @@ onMounted(() => {
 
 .abort-btn {
   padding: 0.45rem 1rem;
-  background: var(--bg2);
-  color: var(--danger);
-  border: 1px solid var(--danger);
-  border-radius: 6px;
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+  border: 1px solid var(--destructive-border);
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
   cursor: pointer;
   transition: background 0.2s;
 }
 .abort-btn:hover {
-  background: rgba(248, 81, 73, 0.1);
+  background: var(--destructive-border);
 }
 
 .message-list {
@@ -388,10 +389,10 @@ onMounted(() => {
 .error-banner {
   margin: 1rem 1.5rem;
   padding: 0.75rem 1rem;
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid var(--danger);
-  border-radius: 8px;
-  color: var(--danger);
+  background: var(--destructive-subtle);
+  border: 1px solid var(--destructive-border);
+  border-radius: var(--radius-sm);
+  color: var(--destructive-text);
   font-size: 0.85rem;
   display: flex;
   align-items: center;
@@ -400,7 +401,7 @@ onMounted(() => {
 .error-banner button {
   background: none;
   border: none;
-  color: var(--danger);
+  color: var(--destructive-text);
   font-weight: 600;
   cursor: pointer;
 }
@@ -411,17 +412,17 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   padding: 6px 16px;
-  background: rgba(88, 166, 255, 0.06);
-  border-radius: 6px;
+  background: var(--brand-subtle);
+  border-radius: var(--radius-sm);
   margin: 8px 0;
   font-size: 0.8rem;
-  color: var(--accent);
+  color: var(--primary);
 }
 .stage-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--primary);
   animation: stage-pulse 1.2s infinite;
 }
 @keyframes stage-pulse {
@@ -432,24 +433,24 @@ onMounted(() => {
 /* v4.4: 忠实度警告 */
 .faithfulness-warning {
   padding: 6px 16px;
-  background: rgba(210, 153, 34, 0.1);
-  border-left: 3px solid #d29922;
-  border-radius: 4px;
+  background: var(--warning-subtle);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
   margin: 8px 0;
   font-size: 0.8rem;
-  color: #d29922;
+  color: var(--warning-text);
 }
 
 /* v4.4: 缓存命中提示 */
 .cache-hit-badge {
   display: inline-block;
   padding: 4px 12px;
-  background: rgba(63, 185, 80, 0.1);
-  border: 1px solid var(--accent2);
+  background: var(--success-subtle);
+  border: 1px solid var(--success-border);
   border-radius: 12px;
   margin: 8px 0;
   font-size: 0.78rem;
-  color: var(--accent2);
+  color: var(--success-text);
   font-weight: 600;
 }
 
@@ -466,11 +467,11 @@ onMounted(() => {
 .empty-state h3 {
   font-size: 2rem;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--primary);
   margin-bottom: 0.75rem;
 }
 .empty-state p {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.95rem;
 }
 .empty-hint {
@@ -490,24 +491,24 @@ onMounted(() => {
 /* v4.0: 库选择器 */
 .library-select {
   padding: 0.3rem 0.6rem;
-  background: var(--bg2);
-  color: var(--ink);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
+  background: var(--muted);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.78rem;
   cursor: pointer;
   max-width: 220px;
 }
 .library-select:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .hamburger-btn span {
   display: block;
   width: 20px;
   height: 2px;
-  background: var(--ink);
+  background: var(--foreground);
   border-radius: 1px;
   transition: transform 0.2s;
 }

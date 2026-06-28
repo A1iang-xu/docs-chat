@@ -27,14 +27,14 @@ defineProps<{
   display: flex;
   gap: 0.75rem;
   padding: 1rem 1.5rem;
-  background: var(--bg2);
+  background: var(--muted);
 }
 
 .skeleton-avatar {
   width: 32px;
   height: 32px;
-  border-radius: 6px;
-  background: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--border);
   animation: shimmer 1.5s infinite;
   flex-shrink: 0;
 }
@@ -48,8 +48,8 @@ defineProps<{
 
 .skeleton-line {
   height: 14px;
-  border-radius: 4px;
-  background: var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--border);
   animation: shimmer 1.5s infinite;
 }
 

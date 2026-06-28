@@ -48,8 +48,8 @@ function retry() {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(248, 81, 73, 0.15);
-  color: var(--danger);
+  background: var(--destructive-subtle);
+  color: var(--destructive);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -64,7 +64,7 @@ function retry() {
 }
 
 .error-boundary p {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.9rem;
   margin-bottom: 1.5rem;
   max-width: 400px;
@@ -72,10 +72,10 @@ function retry() {
 
 .error-boundary button {
   padding: 0.5rem 1.5rem;
-  background: var(--accent);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;

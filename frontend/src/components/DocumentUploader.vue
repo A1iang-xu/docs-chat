@@ -272,10 +272,10 @@ onUnmounted(() => {
 
 .upload-btn {
   padding: 0.45rem 1rem;
-  background: var(--bg2);
-  color: var(--accent);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  background: var(--muted);
+  color: var(--primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
   cursor: pointer;
   transition: background 0.2s;
@@ -283,7 +283,7 @@ onUnmounted(() => {
 }
 
 .upload-btn:hover:not(:disabled) {
-  background: var(--rule);
+  background: var(--border);
 }
 
 .upload-btn:disabled {
@@ -293,10 +293,10 @@ onUnmounted(() => {
 
 .url-import-btn {
   padding: 0.45rem 0.75rem;
-  background: var(--bg2);
-  color: var(--muted);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
   cursor: pointer;
   transition: all 0.2s;
@@ -304,14 +304,14 @@ onUnmounted(() => {
 }
 
 .url-import-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .url-import-btn.active {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
 }
 
 .url-import-panel {
@@ -319,9 +319,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.75rem;
-  background: var(--bg2);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   max-width: 400px;
 }
 
@@ -339,10 +339,10 @@ onUnmounted(() => {
 .version-input {
   flex: 1;
   padding: 0.4rem 0.6rem;
-  background: var(--bg);
-  color: var(--ink);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.82rem;
 }
 
@@ -350,7 +350,7 @@ onUnmounted(() => {
 .slug-input:focus,
 .version-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .slug-input {
@@ -363,10 +363,10 @@ onUnmounted(() => {
 
 .import-btn {
   padding: 0.4rem 0.8rem;
-  background: var(--accent);
-  color: var(--bg);
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.82rem;
   cursor: pointer;
   white-space: nowrap;
@@ -384,10 +384,10 @@ onUnmounted(() => {
 
 .import-result {
   font-size: 0.8rem;
-  color: var(--accent2);
+  color: var(--success-text);
   padding: 0.3rem 0.5rem;
-  background: rgba(63, 185, 80, 0.08);
-  border-radius: 4px;
+  background: var(--success-subtle);
+  border-radius: var(--radius-sm);
 }
 
 .upload-error {
@@ -395,10 +395,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.4rem 0.65rem;
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid var(--danger);
-  border-radius: 6px;
-  color: var(--danger);
+  background: var(--destructive-subtle);
+  border: 1px solid var(--destructive-border);
+  border-radius: var(--radius-sm);
+  color: var(--destructive-text);
   font-size: 0.8rem;
   max-width: 400px;
 }
@@ -406,7 +406,7 @@ onUnmounted(() => {
 .dismiss-btn {
   background: none;
   border: none;
-  color: var(--danger);
+  color: var(--destructive-text);
   font-weight: 600;
   cursor: pointer;
   font-size: 0.8rem;

@@ -94,7 +94,7 @@ export interface DocumentJob {
 // SSE 事件
 // ═══════════════════════════════════════════
 
-export type SSEEventType = 'token' | 'source' | 'done' | 'error' | 'cache' | 'faithfulness_warning' | 'stage'
+export type SSEEventType = 'token' | 'source' | 'done' | 'error' | 'cache' | 'faithfulness_warning' | 'stage' | 'replace'
 
 export interface SSEEvent {
   event: SSEEventType
@@ -131,4 +131,59 @@ export interface MessagesState {
   messages: Record<string, Message[]>
   streamState: Record<string, StreamState>
   loading: boolean
+}
+
+// ═══════════════════════════════════════════
+// RAGAS 评估
+// ═══════════════════════════════════════════
+
+export interface EvaluationResult {
+  avg_faithfulness?: number
+  avg_context_precision?: number
+  avg_context_recall?: number
+  avg_answer_relevancy?: number
+  avg_keyword_coverage?: number
+  faithfulness?: number
+  context_precision?: number
+  context_recall?: number
+  answer_relevancy?: number
+  keyword_coverage?: number
+  dataset_size?: number
+  total_evaluated?: number
+  total_errors?: number
+  created_at?: string
+  timestamp?: string
+  library?: string
+  status?: string
+}
+
+export interface PerItem {
+  query: string
+  status: string
+  current_stage: string
+  stages_completed: string[]
+  error?: string | null
+}
+
+export interface EvalProgress {
+  current: number
+  total: number
+  current_query: string
+  per_item: PerItem[]
+  status?: string
+}
+
+export interface DatasetItem {
+  query: string
+  expected_keywords: string[]
+  source_doc?: string
+}
+
+export interface GenerateDatasetResponse {
+  total_queries: number
+  dataset: DatasetItem[]
+}
+
+export interface HistoryResponse {
+  history: EvaluationResult[]
 }

@@ -17,9 +17,6 @@ const renderedContent = computed(() => {
   return isAssistant.value ? render(props.message.content) : props.message.content
 })
 
-// 用户消息通过 v-text 渲染，v-text 内部设置 textContent，
-// 天然具备 XSS 防护（浏览器不会将 textContent 解析为 HTML），
-// 无需额外 escapeHtml，避免与 v-text 的双重转义。
 const displayContent = computed(() => {
   if (isAssistant.value) {
     return renderedContent.value
@@ -49,7 +46,7 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   try {
     await api.post('/feedback/', {
       message_id: props.message.id,
-      query: '',  // the chat backend doesn't persist queries yet
+      query: '',
       answer: props.message.content,
       sources: props.message.sources,
       feedback: choice,
@@ -68,10 +65,10 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   <div class="message" :class="{ user: isUser, assistant: isAssistant }">
     <div class="role-label">{{ isUser ? '你' : 'DocsChat' }}</div>
     <div class="content">
-      <!-- 用户消息：纯文本 -->
+      <!-- 用户消息 -->
       <div v-if="isUser" class="text" v-text="displayContent"></div>
 
-      <!-- AI 消息：Markdown 渲染 -->
+      <!-- AI 消息 -->
       <div
         v-else
         class="text markdown-body"
@@ -88,10 +85,8 @@ async function submitFeedback(choice: 'positive' | 'negative') {
           @click="toggleSource(source.index)"
         >
           [{{ source.index }}]
-          <!-- v4.4: 悬浮 tooltip（桌面端） -->
           <span class="source-tooltip">
             <div class="tooltip-header">
-              <!-- v4.0: 可点击链接跳转原文 -->
               <a
                 v-if="source.sourceUrl"
                 :href="source.sourceUrl"
@@ -113,7 +108,6 @@ async function submitFeedback(choice: 'positive' | 'negative') {
           </span>
         </span>
 
-        <!-- v4.4: 展开的来源卡片（点击后） -->
         <div
           v-for="source in message.sources.filter(s => expandedSources.has(s.index))"
           :key="'expanded-' + source.index"
@@ -138,7 +132,7 @@ async function submitFeedback(choice: 'positive' | 'negative') {
         </div>
       </div>
 
-      <!-- v4.0: 用户反馈按钮 -->
+      <!-- 反馈按钮 -->
       <div v-if="isAssistant && message.id" class="feedback">
         <button
           class="feedback-btn"
@@ -173,17 +167,17 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 
 .message.user {
-  background: var(--bg);
+  background: var(--background);
 }
 
 .message.assistant {
-  background: var(--bg2);
+  background: var(--muted);
 }
 
 .role-label {
   font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--muted-foreground);
   margin-bottom: 0.4rem;
 }
 
@@ -202,11 +196,11 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 .markdown-body :deep(h3) {
   margin: 1rem 0 0.5rem;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .markdown-body :deep(h1) { font-size: 1.3rem; }
-.markdown-body :deep(h2) { font-size: 1.15rem; border-bottom: 1px solid var(--rule); padding-bottom: 0.25rem; }
+.markdown-body :deep(h2) { font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
 .markdown-body :deep(h3) { font-size: 1.05rem; }
 
 .markdown-body :deep(p) {
@@ -224,12 +218,12 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 
 .markdown-body :deep(blockquote) {
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid var(--primary);
   padding: 0.25rem 1rem;
   margin: 0.75rem 0;
-  color: var(--muted);
-  background: rgba(88, 166, 255, 0.05);
-  border-radius: 0 4px 4px 0;
+  color: var(--muted-foreground);
+  background: var(--brand-subtle);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .markdown-body :deep(table) {
@@ -240,23 +234,23 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid var(--rule);
+  border: 1px solid var(--border);
   padding: 0.4rem 0.75rem;
   text-align: left;
 }
 
 .markdown-body :deep(th) {
-  background: var(--bg);
+  background: var(--muted);
   font-weight: 600;
 }
 
 .markdown-body :deep(strong) {
   font-weight: 700;
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .markdown-body :deep(a) {
-  color: var(--accent);
+  color: var(--primary);
   text-decoration: none;
 }
 
@@ -266,15 +260,15 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 /* ── 行内代码 ── */
 :deep(.inline-code) {
-  background: rgba(88, 166, 255, 0.1);
-  color: var(--accent);
+  background: var(--brand-subtle);
+  color: var(--primary);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: var(--font-mono);
 }
 
-/* ── 代码块容器（含语言标签 + 复制按钮） ── */
+/* ── 代码块容器 ── */
 :deep(.code-block-wrapper) {
   position: relative;
   margin: 0.75rem 0 1rem;
@@ -286,9 +280,9 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   right: 0;
   padding: 2px 10px;
   font-size: 0.7rem;
-  color: var(--muted);
-  background: var(--bg2);
-  border-radius: 0 8px 0 4px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 0 var(--radius-sm) 0 var(--radius-sm);
   z-index: 2;
   pointer-events: none;
 }
@@ -299,10 +293,10 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   right: 4px;
   padding: 3px 10px;
   font-size: 0.7rem;
-  color: var(--muted);
-  background: var(--bg2);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s, color 0.2s;
@@ -314,36 +308,23 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 
 :deep(.copy-btn:hover) {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--primary);
+  border-color: var(--primary);
 }
 
-/* 当语言标签存在时，复制按钮右移避免重叠 */
 :deep(.code-lang-label ~ .copy-btn) {
   right: 70px;
 }
 
-/* ── 代码块（highlight.js） ── */
+/* ── 代码块 ── */
 :deep(pre) {
   background: #0d1117;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 0;
   margin: 0;
   overflow-x: auto;
   position: relative;
-}
-
-:deep(pre::before) {
-  content: attr(data-lang);
-  position: absolute;
-  top: 0;
-  right: 0;
-  padding: 2px 10px;
-  font-size: 0.7rem;
-  color: var(--muted);
-  background: var(--bg2);
-  border-radius: 0 8px 0 4px;
 }
 
 :deep(pre code) {
@@ -351,7 +332,7 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   padding: 1rem 1.25rem;
   font-size: 0.85rem;
   line-height: 1.6;
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: var(--font-mono);
   overflow-x: auto;
 }
 
@@ -362,7 +343,7 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 /* ── 引用角标 ── */
 :deep(sup.citation) {
-  color: var(--accent);
+  color: var(--primary);
   font-weight: 700;
   font-size: 0.78em;
   cursor: pointer;
@@ -374,16 +355,16 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 
 :deep(sup.citation:hover) {
-  background: rgba(88, 166, 255, 0.15);
+  background: var(--brand-subtle);
 }
 
 /* ── 来源引用悬浮卡片 ── */
 .sources {
   margin-top: 1rem;
   padding-top: 0.65rem;
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--border);
   font-size: 0.8rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .sources-label {
@@ -393,7 +374,7 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 .source-badge {
   display: inline-block;
   position: relative;
-  color: var(--accent);
+  color: var(--primary);
   font-weight: 600;
   cursor: pointer;
   margin-right: 0.35rem;
@@ -406,16 +387,16 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   left: 50%;
   transform: translateX(-50%);
   width: 320px;
-  background: var(--bg);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font-size: 0.8rem;
   font-weight: 400;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: normal;
   word-break: break-word;
   z-index: 100;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -425,11 +406,11 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 .tooltip-header {
   padding: 0.5rem 0.75rem;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--rule);
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
   font-weight: 600;
   font-size: 0.78rem;
-  color: var(--accent);
+  color: var(--primary);
 }
 
 .tooltip-body {
@@ -441,15 +422,14 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 .tooltip-score {
   padding: 0.35rem 0.75rem;
-  background: var(--bg2);
-  border-top: 1px solid var(--rule);
+  background: var(--muted);
+  border-top: 1px solid var(--border);
   font-size: 0.72rem;
-  color: var(--accent2);
+  color: var(--success-text);
 }
 
-/* v4.0: tooltip header link */
 .source-link {
-  color: var(--accent);
+  color: var(--primary);
   text-decoration: none;
 }
 .source-link:hover {
@@ -458,15 +438,14 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 
 .tooltip-library {
   font-size: 0.72rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
-/* v4.4: 展开的来源卡片 */
 .source-card {
   margin-top: 0.5rem;
-  background: var(--bg);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .card-header {
@@ -474,29 +453,29 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.6rem;
-  background: var(--bg2);
-  border-bottom: 1px solid var(--rule);
+  background: var(--muted);
+  border-bottom: 1px solid var(--border);
   font-size: 0.78rem;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary);
 }
 .card-library {
   padding: 1px 6px;
-  background: rgba(88, 166, 255, 0.1);
+  background: var(--brand-subtle);
   border-radius: 3px;
   font-size: 0.65rem;
-  color: var(--accent);
+  color: var(--primary);
 }
 .card-score {
   margin-left: auto;
   font-size: 0.7rem;
-  color: var(--accent2);
+  color: var(--success-text);
   font-weight: 400;
 }
 .card-close {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--muted-foreground);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
@@ -504,18 +483,17 @@ async function submitFeedback(choice: 'positive' | 'negative') {
   transition: color 0.15s;
 }
 .card-close:hover {
-  color: var(--danger);
+  color: var(--destructive);
 }
 .card-body {
   padding: 0.5rem 0.6rem;
   font-size: 0.78rem;
   line-height: 1.6;
-  color: var(--ink);
+  color: var(--foreground);
   max-height: 200px;
   overflow-y: auto;
 }
 
-/* v4.0: 反馈按钮 */
 .feedback {
   margin-top: 0.65rem;
   display: flex;
@@ -524,8 +502,8 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 .feedback-btn {
   background: none;
-  border: 1px solid var(--rule);
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 2px 8px;
   cursor: pointer;
   font-size: 0.85rem;
@@ -534,18 +512,18 @@ async function submitFeedback(choice: 'positive' | 'negative') {
 }
 .feedback-btn:hover:not(:disabled) {
   opacity: 1;
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 .feedback-btn.active {
   opacity: 1;
-  border-color: var(--accent2);
-  background: rgba(63, 185, 80, 0.1);
+  border-color: var(--success);
+  background: var(--success-subtle);
 }
 .feedback-btn:disabled {
   cursor: default;
 }
 .feedback-done {
   font-size: 0.72rem;
-  color: var(--accent2);
+  color: var(--success-text);
 }
 </style>

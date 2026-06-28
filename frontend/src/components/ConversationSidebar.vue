@@ -60,8 +60,8 @@ onUnmounted(() => {
   width: 260px;
   min-width: 260px;
   height: 100vh;
-  background: var(--bg2);
-  border-right: 1px solid var(--rule);
+  background: var(--muted);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   padding: 1rem;
@@ -70,10 +70,10 @@ onUnmounted(() => {
 .new-chat-btn {
   width: 100%;
   padding: 0.65rem;
-  background: var(--accent);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
@@ -91,7 +91,7 @@ onUnmounted(() => {
 
 .conv-item {
   padding: 0.65rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   margin-bottom: 0.25rem;
   transition: background 0.15s;
@@ -100,15 +100,15 @@ onUnmounted(() => {
   gap: 0.15rem;
 }
 .conv-item:hover {
-  background: var(--rule);
+  background: var(--border);
 }
 .conv-item.active {
-  background: var(--rule);
+  background: var(--border);
 }
 
 .conv-title {
   font-size: 0.9rem;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,11 +116,11 @@ onUnmounted(() => {
 
 .conv-date {
   font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .empty-hint {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.85rem;
   text-align: center;
   margin-top: 2rem;

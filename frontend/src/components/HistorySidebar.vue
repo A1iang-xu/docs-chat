@@ -58,8 +58,8 @@ function formatTime(ts: number): string {
 .history-sidebar {
   width: 240px;
   height: 100%;
-  background: var(--bg2);
-  border-right: 1px solid var(--rule);
+  background: var(--muted);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -70,26 +70,26 @@ function formatTime(ts: number): string {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--border);
 }
 
 .history-title {
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .clear-btn {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.75rem;
   cursor: pointer;
   transition: color 0.15s;
 }
 
 .clear-btn:hover {
-  color: var(--danger);
+  color: var(--destructive);
 }
 
 .empty {
@@ -97,7 +97,7 @@ function formatTime(ts: number): string {
   align-items: center;
   justify-content: center;
   flex: 1;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.8rem;
 }
 
@@ -111,16 +111,16 @@ function formatTime(ts: number): string {
   padding: 8px 16px;
   cursor: pointer;
   transition: background 0.15s;
-  border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+  border-bottom: 1px solid var(--border);
 }
 
 .history-item:hover {
-  background: var(--bg);
+  background: var(--background);
 }
 
 .item-query {
   font-size: 0.82rem;
-  color: var(--ink);
+  color: var(--foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -132,13 +132,13 @@ function formatTime(ts: number): string {
   align-items: center;
   gap: 6px;
   font-size: 0.7rem;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .item-library {
   padding: 1px 6px;
-  background: rgba(88, 166, 255, 0.1);
-  color: var(--accent);
+  background: var(--brand-subtle);
+  color: var(--primary);
   border-radius: 3px;
   font-size: 0.65rem;
 }
@@ -150,7 +150,7 @@ function formatTime(ts: number): string {
 .item-remove {
   background: none;
   border: none;
-  color: var(--muted);
+  color: var(--muted-foreground);
   cursor: pointer;
   font-size: 0.9rem;
   line-height: 1;
@@ -164,6 +164,6 @@ function formatTime(ts: number): string {
 }
 
 .item-remove:hover {
-  color: var(--danger);
+  color: var(--destructive);
 }
 </style>

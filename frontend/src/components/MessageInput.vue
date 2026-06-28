@@ -21,7 +21,6 @@ function handleKeydown(event: KeyboardEvent) {
     handleSend()
   }
   if (event.key === 'Escape') {
-    // 聚焦状态下按 Escape 取消输入
     (event.target as HTMLTextAreaElement).blur()
   }
 }
@@ -49,7 +48,6 @@ function handleKeydown(event: KeyboardEvent) {
       :disabled="!input.trim() || isSending"
       :aria-disabled="isSending || !input.trim()"
       aria-label="发送消息"
-
       @click="handleSend"
     >
       {{ isSending ? '发送中...' : '发送' }}
@@ -63,17 +61,17 @@ function handleKeydown(event: KeyboardEvent) {
   align-items: flex-end;
   gap: 0.75rem;
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--rule);
-  background: var(--bg);
+  border-top: 1px solid var(--border);
+  background: var(--background);
 }
 
 .input-box {
   flex: 1;
   padding: 0.7rem 0.85rem;
-  background: var(--bg2);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  color: var(--ink);
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
   font-size: 0.9rem;
   font-family: inherit;
   resize: none;
@@ -84,7 +82,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .input-box:focus {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .input-box:disabled {
@@ -93,10 +91,10 @@ function handleKeydown(event: KeyboardEvent) {
 
 .send-btn {
   padding: 0.7rem 1.25rem;
-  background: var(--accent);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
