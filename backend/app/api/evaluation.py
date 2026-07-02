@@ -10,6 +10,8 @@ import logging
 import os
 from typing import Optional
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -70,9 +72,12 @@ async def generate_dataset(request: GenerateDatasetRequest):
         raise HTTPException(status_code=500, detail=f"数据集生成失败: {exc}")
 
 
-@router.post("/run", response_model=EvalResponse)
+@router.post("/run")
 async def run_evaluation(request: EvalRequest):
-    """触发评估任务，同步返回结果。"""
+    """v4.5: 触发评估任务，在后台异步执行，API 立即返回。
+
+    评估在后台运行，不阻塞事件循环。前端通过 GET /evaluation/latest 轮询结果。
+    """
     if not settings.EVALUATION_ENABLED:
         raise HTTPException(status_code=403, detail="评估功能未启用 (EVALUATION_ENABLED=False)")
 
@@ -95,27 +100,25 @@ async def run_evaluation(request: EvalRequest):
     if not isinstance(dataset, list) or len(dataset) == 0:
         raise HTTPException(status_code=400, detail="数据集必须是非空列表")
 
-    logger.info("启动评估: %d 条查询, library=%s", len(dataset), request.library)
+    logger.info("启动后台评估: %d 条查询, library=%s", len(dataset), request.library)
 
-    try:
-        report = await evaluation_service.evaluate_dataset(dataset, library=request.library)
-    except Exception as exc:
-        logger.error("评估失败: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"评估失败: {exc}")
+    # v4.5: 在当前事件循环中创建后台任务，不阻塞响应返回
+    async def _run_in_background():
+        try:
+            await evaluation_service.evaluate_dataset(
+                dataset, library=request.library,
+            )
+            logger.info("后台评估完成")
+        except Exception as exc:
+            logger.error("后台评估失败: %s", exc, exc_info=True)
 
-    # 提取汇总指标
-    avg_scores = {
-        k: v for k, v in report.items()
-        if k.startswith("avg_")
+    asyncio.create_task(_run_in_background())
+
+    return {
+        "status": "running",
+        "total_queries": len(dataset),
+        "message": "评估已在后台启动，请通过 GET /evaluation/latest 查看结果",
     }
-
-    return EvalResponse(
-        status="completed",
-        total_queries=report.get("dataset_size", len(dataset)),
-        total_evaluated=report.get("total_evaluated", 0),
-        total_errors=report.get("total_errors", 0),
-        avg_scores=avg_scores,
-    )
 
 
 @router.get("/latest")
@@ -125,6 +128,15 @@ async def get_latest_report():
     if report is None:
         return {"status": "empty", "message": "暂无评估报告，请先运行评估"}
     return report
+
+
+@router.get("/progress")
+async def get_progress():
+    """获取当前评估进度，包含每个查询的 RAG 阶段信息。"""
+    progress = evaluation_service.get_progress()
+    if progress is None:
+        return {"status": "idle", "message": "暂无运行中的评估任务"}
+    return progress
 
 
 @router.get("/history")
@@ -152,10 +164,33 @@ async def get_evaluation_history():
                 "total_evaluated": report.get("total_evaluated", 0),
                 "total_errors": report.get("total_errors", 0),
                 "avg_faithfulness": report.get("avg_faithfulness", 0),
+                "avg_context_precision": report.get("avg_context_precision", 0),
+                "avg_context_recall": report.get("avg_context_recall", 0),
                 "avg_answer_relevancy": report.get("avg_answer_relevancy", 0),
+                "avg_keyword_coverage": report.get("avg_keyword_coverage", 0),
                 "library": report.get("library"),
             })
         except Exception:
             continue
 
     return {"history": history}
+
+
+@router.delete("/history")
+async def clear_evaluation_history():
+    """清空所有评估历史记录。"""
+    results_dir = evaluation_service.results_dir
+    if not results_dir.exists():
+        return {"status": "ok", "deleted": 0}
+
+    deleted = 0
+    for f in os.listdir(results_dir):
+        if f.endswith(".json"):
+            try:
+                (results_dir / f).unlink()
+                deleted += 1
+            except Exception:
+                pass
+
+    logger.info("评估历史已清空: %d 个文件", deleted)
+    return {"status": "ok", "deleted": deleted}

@@ -18,7 +18,9 @@ Embedding 选型矩阵:
 - remote: OpenAI-compatible API (vLLM/TGI)
 """
 import asyncio
+import json
 import logging
+import os
 import time
 from typing import List, Optional
 
@@ -123,6 +125,8 @@ class VectorStoreService:
         self.embedding_function: EmbeddingFunction = self._build_embedding_function()
         self._collection = None
         self._code_collection = None  # v4.1
+        self._registry_path = os.path.join(settings.CHROMA_PERSIST_DIR, "library_registry.json")
+        self._library_registry: set[str] = self._load_registry()
 
     def _build_embedding_function(self) -> EmbeddingFunction:
         provider = settings.EMBEDDING_PROVIDER.lower()
@@ -168,6 +172,12 @@ class VectorStoreService:
 
     @property
     def collection(self):
+        if self._collection is not None:
+            try:
+                self._collection.count()
+            except Exception:
+                logger.warning("Collection 引用已失效，重新创建")
+                self._collection = None
         if self._collection is None:
             existing = self._get_existing_collection()
             if existing is not None:
@@ -196,6 +206,12 @@ class VectorStoreService:
     @property
     def code_collection(self):
         """v4.1: 代码块子索引 collection。"""
+        if self._code_collection is not None:
+            try:
+                self._code_collection.count()
+            except Exception:
+                logger.warning("Code Collection 引用已失效，重新创建")
+                self._code_collection = None
         if self._code_collection is None:
             self._code_collection = self.client.get_or_create_collection(
                 name=self.CODE_COLLECTION_NAME,
@@ -257,6 +273,7 @@ class VectorStoreService:
             "heading_path": getattr(c, "heading_path", "") or "",
             "code_language": getattr(c, "code_language", "") or "",
             "is_code_block": getattr(c, "is_code_block", False),
+            "created_at": getattr(c, "created_at", "") or "",  # v4.5
         } for c in chunks]
         logger.info("upserting %s chunks to '%s'", len(texts), collection.name)
         collection.upsert(ids=ids, documents=texts, metadatas=metadatas)
@@ -357,26 +374,69 @@ class VectorStoreService:
         return self.collection.count()
 
     def get_unique_documents(self):
-        if self.collection.count() == 0:
-            return []
-        results = self.collection.get(include=["metadatas"])
+        """v4.5: 返回入库文档列表（合并 text + code collection）。"""
         doc_map: dict = {}
-        if results["ids"]:
-            for i, chunk_id in enumerate(results["ids"]):
-                meta = results["metadatas"][i] if results["metadatas"] else {}
-                fn = meta.get("document_name", "")
-                if not fn:
-                    continue
-                if fn not in doc_map:
-                    doc_map[fn] = {"filename": fn, "chunk_count": 0, "page_count": meta.get("page", 0)}
-                doc_map[fn]["chunk_count"] += 1
-                doc_map[fn]["page_count"] = max(doc_map[fn]["page_count"], meta.get("page", 0))
+        for coll in [self.collection, self.code_collection]:
+            if coll.count() == 0:
+                continue
+            results = coll.get(include=["metadatas"])
+            if results["ids"]:
+                for i, chunk_id in enumerate(results["ids"]):
+                    meta = results["metadatas"][i] if results["metadatas"] else {}
+                    fn = meta.get("document_name", "")
+                    if not fn:
+                        continue
+                    if fn not in doc_map:
+                        doc_map[fn] = {
+                            "id": fn,
+                            "filename": fn,
+                            "chunk_count": 0,
+                            "page_count": meta.get("page", 0),
+                            "library": meta.get("library", ""),
+                            "status": "ready",
+                            "created_at": meta.get("created_at", ""),
+                        }
+                    doc_map[fn]["chunk_count"] += 1
+                    doc_map[fn]["page_count"] = max(doc_map[fn]["page_count"], meta.get("page", 0))
         return list(doc_map.values())
+
+    # ── v4.5: 知识库注册表（持久化空库） ──
+
+    def _load_registry(self) -> set[str]:
+        """从 JSON 文件加载已创建的知识库名称集合。"""
+        try:
+            if os.path.exists(self._registry_path):
+                with open(self._registry_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return set(data.get("libraries", []))
+        except Exception as exc:
+            logger.warning("加载知识库注册表失败: %s", exc)
+        return set()
+
+    def _save_registry(self):
+        """将知识库名称集合持久化到 JSON 文件。"""
+        try:
+            os.makedirs(os.path.dirname(self._registry_path), exist_ok=True)
+            with open(self._registry_path, "w", encoding="utf-8") as f:
+                json.dump({"libraries": sorted(self._library_registry)}, f, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning("保存知识库注册表失败: %s", exc)
+
+    def register_library(self, name: str):
+        """注册一个知识库（即使尚未包含文档）。"""
+        self._library_registry.add(name)
+        self._save_registry()
+
+    def unregister_library(self, name: str):
+        """从注册表中移除知识库。"""
+        if name in self._library_registry:
+            self._library_registry.discard(name)
+            self._save_registry()
 
     # ── v4.0: 多库命名空间 ──
 
     def get_libraries(self):
-        """v4.1: 返回所有已入库的文档库列表（合并 text + code collection）。"""
+        """v4.5: 返回所有文档库列表（chunk 扫描 + 注册表空库合并）。"""
         lib_map: dict[str, dict] = {}
         for coll in [self.collection, self.code_collection]:
             try:
@@ -399,6 +459,23 @@ class VectorStoreService:
                             "source_url": meta.get("source_url", ""),
                         }
                     lib_map[key]["chunk_count"] += 1
+        # 合并注册表中的空库（尚无文档的知识库）
+        # 同时清理已有 chunk 的注册表记录
+        registered_names = {entry["library"] for entry in lib_map.values()}
+        cleaned = False
+        for name in list(self._library_registry):
+            if name in registered_names:
+                self._library_registry.discard(name)
+                cleaned = True
+            else:
+                lib_map[name] = {
+                    "library": name,
+                    "version": "latest",
+                    "chunk_count": 0,
+                    "source_url": "",
+                }
+        if cleaned:
+            self._save_registry()
         return list(lib_map.values())
 
     def get_library_chunks(self, library: str) -> list[dict]:
@@ -442,6 +519,59 @@ class VectorStoreService:
         self._collection = None
         self._code_collection = None
         logger.info("ChromaDB cleared (text + code collections)")
+
+    def delete_document(self, document_name: str) -> int:
+        """v4.5: 删除指定文档的所有 chunks。
+
+        Args:
+            document_name: 文档名称（对应 metadata 中的 document_name 字段）
+
+        Returns:
+            被删除的 chunk 总数
+        """
+        deleted = 0
+        for coll in [self.collection, self.code_collection]:
+            try:
+                if coll.count() == 0:
+                    continue
+                results = coll.get(where={"document_name": document_name}, include=[])
+                ids = results.get("ids", [])
+                if ids:
+                    coll.delete(ids=ids)
+                    deleted += len(ids)
+                    logger.info("从 %s 删除文档 '%s' 的 %d 个 chunks", coll.name, document_name, len(ids))
+            except Exception as exc:
+                logger.warning("删除文档 '%s' 时出错: %s", document_name, exc)
+        return deleted
+
+    def delete_library(self, library: str) -> int:
+        """v4.5: 删除指定文档库的所有 chunks。
+
+        Args:
+            library: 文档库名称
+
+        Returns:
+            被删除的 chunk 总数
+        """
+        deleted = 0
+        for coll in [self.collection, self.code_collection]:
+            try:
+                if coll.count() == 0:
+                    continue
+                results = coll.get(where={"library": library}, include=[])
+                ids = results.get("ids", [])
+                if ids:
+                    coll.delete(ids=ids)
+                    deleted += len(ids)
+                    logger.info("从 %s 删除库 '%s' 的 %d 个 chunks", coll.name, library, len(ids))
+            except Exception as exc:
+                logger.warning("删除库 '%s' 时出错: %s", library, exc)
+        # 同时从注册表中移除
+        if library in self._library_registry:
+            self.unregister_library(library)
+            if deleted == 0:
+                deleted = -1  # 标记：仅删除了注册表记录
+        return deleted
 
 
 vector_store = VectorStoreService()

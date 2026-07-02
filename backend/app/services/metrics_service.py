@@ -79,6 +79,10 @@ class MetricsService:
             except Exception:
                 libraries = []
                 documents = []
+            # v4.6: 计算汇总统计
+            total_docs = len(documents)
+            total_chunks = sum(lib.get("chunk_count", 0) for lib in libraries)
+            total_libraries = len(libraries)
             return {
                 "latency_p50": {s: self._p50(s) for s in stages},
                 "latency_p95": {s: self._p95(s) for s in stages},
@@ -104,6 +108,10 @@ class MetricsService:
                 "faithfulness_warnings": self.faithfulness_warnings,
                 "libraries": libraries,
                 "documents": documents,
+                # v4.6: 知识库汇总统计
+                "total_documents": total_docs,
+                "total_chunks": total_chunks,
+                "total_libraries": total_libraries,
             }
 
 

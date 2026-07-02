@@ -6,6 +6,7 @@ v3.3 升级:
 import logging
 from typing import AsyncGenerator, Optional
 from openai import AsyncOpenAI
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ class LLMService:
         self.client = AsyncOpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
             base_url=settings.DEEPSEEK_BASE_URL,
+            timeout=httpx.Timeout(120.0, connect=10.0),
         )
         self.model = settings.DEEPSEEK_MODEL
         self.fallback_model = settings.LLM_FALLBACK_MODEL or settings.DEEPSEEK_MODEL

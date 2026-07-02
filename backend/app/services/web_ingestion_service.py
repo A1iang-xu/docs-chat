@@ -77,6 +77,22 @@ class WebIngestionService:
         self._jobs[job_id]["status"] = status
         self._jobs[job_id]["updated_at"] = datetime.now()
 
+    @staticmethod
+    def _sanitize_title(raw_title: str, url: str) -> str:
+        """清理文档标题：无效 title 时回退到 URL 路径名。"""
+        from urllib.parse import urlparse
+        invalid_titles = {"", "redirecting...", "redirecting", "loading...", "loading", "404 not found", "just a moment..."}
+        cleaned = raw_title.strip()
+        if cleaned.lower() in invalid_titles or len(cleaned) <= 3:
+            # 回退到 URL 路径的最后一段
+            path = urlparse(url).path.strip("/")
+            if path:
+                parts = path.split("/")
+                cleaned = parts[-1] if parts else url
+            else:
+                cleaned = urlparse(url).netloc
+        return cleaned
+
     async def _run_job(
         self, job_id: str, url: str, library_slug: str, version: str
     ) -> None:
@@ -103,6 +119,7 @@ class WebIngestionService:
                         library=library_slug,
                         version=version,
                         document_name=page.get("title", library_slug),
+                        created_at=self._jobs[job_id].get("created_at", datetime.now()).isoformat(),
                     )
                     all_chunks.extend(chunks)
 
@@ -204,27 +221,45 @@ class WebIngestionService:
         return [url]
 
     async def _crawl(self, urls: list[str]) -> list[dict]:
-        """调用 Crawl4AI 抓取页面，返回 [{url, markdown, title}]。
+        """抓取页面，返回 [{url, markdown, title}]。
 
+        优先使用 Crawl4AI，不可用时降级为 httpx + BeautifulSoup。
         - 单 URL 模式: BFSDeepCrawlStrategy 同域搜索
         - 多 URL 模式: 逐个直接抓取（sitemap 已给清单）
         """
         try:
+            # 修复 crawl4ai RobotsParser 的路径双嵌套 bug
+            import os
+            import sqlite3
+            from crawl4ai.utils import RobotsParser, get_home_folder
+            def _patched_init(self, cache_dir=None, cache_ttl=None):
+                import os, sqlite3
+                from crawl4ai.utils import get_home_folder
+                self.cache_dir = cache_dir or os.path.join(get_home_folder(), "robots")
+                self.cache_ttl = cache_ttl or (7 * 24 * 60 * 60)
+                os.makedirs(self.cache_dir, exist_ok=True)
+                self.db_path = os.path.join(self.cache_dir, "robots_cache.db")
+                with sqlite3.connect(self.db_path) as conn:
+                    conn.execute("""CREATE TABLE IF NOT EXISTS robots_cache (
+                        domain TEXT PRIMARY KEY, rules TEXT NOT NULL,
+                        fetch_time INTEGER NOT NULL, hash TEXT NOT NULL
+                    )""")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_domain ON robots_cache(domain)")
+            RobotsParser.__init__ = _patched_init
             from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
             from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
             from crawl4ai.content_filter_strategy import PruningContentFilter
-        except ImportError:
-            raise RuntimeError(
-                "crawl4ai 未安装，请运行: pip install crawl4ai && crawl4ai-setup"
-            )
 
-        prune_filter = PruningContentFilter(threshold=0.48, threshold_type="fixed")
-        markdown_gen = DefaultMarkdownGenerator(content_filter=prune_filter)
+            prune_filter = PruningContentFilter(threshold=0.48, threshold_type="fixed")
+            markdown_gen = DefaultMarkdownGenerator(content_filter=prune_filter)
 
-        if len(urls) == 1:
-            return await self._crawl_bfs(urls[0], markdown_gen)
-        else:
-            return await self._crawl_direct(urls, markdown_gen)
+            if len(urls) == 1:
+                return await self._crawl_bfs(urls[0], markdown_gen)
+            else:
+                return await self._crawl_direct(urls, markdown_gen)
+        except Exception as exc:
+            logger.warning("crawl4ai 不可用 (%s: %s)，使用 httpx + BeautifulSoup 降级方案", type(exc).__name__, str(exc))
+            return await self._crawl_simple(urls)
 
     async def _crawl_bfs(self, seed_url: str, markdown_gen) -> list[dict]:
         """BFS 深度爬取（单 URL 种子模式）。"""
@@ -258,11 +293,11 @@ class WebIngestionService:
             pages = []
             for r in results:
                 if r.success and r.markdown and r.markdown.fit_markdown:
+                    raw_title = getattr(getattr(r, "metadata", None), "title", "") or r.url.rsplit("/", 2)[-1]
                     pages.append({
                         "url": r.url,
                         "markdown": r.markdown.fit_markdown.strip(),
-                        "title": getattr(getattr(r, "metadata", None), "title", "")
-                                 or r.url.rsplit("/", 2)[-1],
+                        "title": self._sanitize_title(raw_title, r.url),
                     })
             logger.info("BFS 抓取: %d pages from %s", len(pages), domain)
             return pages
@@ -284,11 +319,11 @@ class WebIngestionService:
                 try:
                     result = await crawler.arun(url, config=config)
                     if result.success and result.markdown and result.markdown.fit_markdown:
+                        raw_title = getattr(getattr(result, "metadata", None), "title", "") or url.rsplit("/", 2)[-1]
                         pages.append({
                             "url": url,
                             "markdown": result.markdown.fit_markdown.strip(),
-                            "title": getattr(getattr(result, "metadata", None), "title", "")
-                                     or url.rsplit("/", 2)[-1],
+                            "title": self._sanitize_title(raw_title, url),
                         })
                     else:
                         logger.warning("抓取失败: %s", url)
@@ -297,6 +332,74 @@ class WebIngestionService:
                     continue
 
         logger.info("直接抓取: %d/%d 成功", len(pages), len(urls))
+        return pages
+
+    async def _crawl_simple(self, urls: list[str]) -> list[dict]:
+        """降级方案: 使用 httpx + BeautifulSoup 抓取页面，提取纯文本。
+
+        无 crawl4ai 时使用，仅抓取单个 URL（不支持 BFS），
+        提取页面正文文本作为 markdown。
+        支持 meta refresh 重定向跟随。
+        """
+        import httpx
+        import re
+        from bs4 import BeautifulSoup
+
+        pages: list[dict] = []
+        # 限制抓取数量
+        urls = urls[: min(len(urls), settings.WEB_INGEST_MAX_PAGES)]
+
+        async with httpx.AsyncClient(
+            timeout=30, follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; DocsChatBot/1.0)"},
+        ) as client:
+            for url in urls:
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    soup = BeautifulSoup(resp.text, "html.parser")
+
+                    # 检测 meta refresh 重定向，自动跟随
+                    meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
+                    if meta_refresh:
+                        content = meta_refresh.get("content", "")
+                        match = re.search(r"url=(\S+)", content, re.IGNORECASE)
+                        if match:
+                            redirect_url = match.group(1).strip().strip("'\"")
+                            logger.info("跟随 meta refresh 重定向: %s → %s", url, redirect_url)
+                            resp2 = await client.get(redirect_url)
+                            resp2.raise_for_status()
+                            soup = BeautifulSoup(resp2.text, "html.parser")
+                            url = redirect_url  # 使用重定向后的 URL
+
+                    # 移除 script / style / nav / footer / header / aside
+                    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                        tag.decompose()
+
+                    # 提取 title
+                    raw_title = soup.title.string.strip() if soup.title and soup.title.string else ""
+                    title = self._sanitize_title(raw_title, url)
+
+                    body = soup.body
+                    text = body.get_text(separator="\n", strip=True) if body else ""
+
+                    # 清理多余空行
+                    text = re.sub(r"\n{3,}", "\n\n", text)
+
+                    if text:
+                        pages.append({
+                            "url": url,
+                            "markdown": text,
+                            "title": title,
+                        })
+                        logger.info("简单抓取成功: %s (%d 字符)", url, len(text))
+                    else:
+                        logger.warning("简单抓取无内容: %s", url)
+                except Exception as exc:
+                    logger.warning("简单抓取异常 %s: %s", url, exc)
+                    continue
+
+        logger.info("简单抓取: %d/%d 成功", len(pages), len(urls))
         return pages
 
 

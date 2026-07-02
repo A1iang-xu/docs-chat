@@ -49,6 +49,7 @@ class MarkdownChunker:
         library: str = "",
         version: str = "latest",
         document_name: str = "",
+        created_at: str = "",  # v4.5
     ) -> list[DocumentChunk]:
         """主入口：Markdown 文本 → DocumentChunk 列表。"""
         if not markdown or not markdown.strip():
@@ -94,6 +95,7 @@ class MarkdownChunker:
                 library=library,
                 version=version,
                 document_name=_doc_name,
+                created_at=created_at,
             )
 
             for ch in section_chunks:
@@ -169,6 +171,7 @@ class MarkdownChunker:
         library: str,
         version: str,
         document_name: str,
+        created_at: str = "",
     ) -> list[DocumentChunk]:
         """对单个 section 做代码感知递归分块。"""
         chunks: list[DocumentChunk] = []
@@ -184,7 +187,7 @@ class MarkdownChunker:
                 if current_text_parts:
                     text_chunks = self._split_text_parts(
                         current_text_parts, heading_path, source_url,
-                        library, version, document_name,
+                        library, version, document_name, created_at,
                     )
                     chunks.extend(text_chunks)
                     current_text_parts = []
@@ -192,7 +195,7 @@ class MarkdownChunker:
                 # 代码块作为原子 chunk
                 code_chunk = self._make_code_chunk(
                     content, code_lang, heading_path, source_url,
-                    library, version, document_name,
+                    library, version, document_name, created_at,
                 )
                 chunks.append(code_chunk)
             else:
@@ -202,7 +205,7 @@ class MarkdownChunker:
         if current_text_parts:
             text_chunks = self._split_text_parts(
                 current_text_parts, heading_path, source_url,
-                library, version, document_name,
+                library, version, document_name, created_at,
             )
             chunks.extend(text_chunks)
 
@@ -245,6 +248,7 @@ class MarkdownChunker:
         library: str,
         version: str,
         document_name: str,
+        created_at: str = "",
     ) -> list[DocumentChunk]:
         """对普通文本部分用 RecursiveCharacterTextSplitter 切分。"""
         combined = "\n\n".join(text_parts)
@@ -276,6 +280,7 @@ class MarkdownChunker:
                 heading_path=heading_path,
                 code_language="",
                 is_code_block=False,
+                created_at=created_at,
             ))
         return chunks
 
@@ -288,6 +293,7 @@ class MarkdownChunker:
         library: str,
         version: str,
         document_name: str,
+        created_at: str = "",
     ) -> DocumentChunk:
         """创建代码块专用 DocumentChunk。"""
         # 超长代码块截断但保持标记
@@ -308,6 +314,7 @@ class MarkdownChunker:
             heading_path=heading_path,
             code_language=code_language,
             is_code_block=True,
+            created_at=created_at,
         )
 
 

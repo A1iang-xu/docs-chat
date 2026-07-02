@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     PRELOAD_RERANKER: bool = False
 
     # ── 分块策略 ──
-    CHUNK_SIZE: int = 512
+    CHUNK_SIZE: int = 768
     CHUNK_OVERLAP: int = 100
     MIN_CHUNK_CHARS: int = 80
     MAX_CHUNK_CHARS: int = 1024
@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     QG_MIN_PAGES: int = 1
 
     # ── 检索 ──
-    RETRIEVAL_TOP_K: int = 10
+    RETRIEVAL_TOP_K: int = 20
     RERANKER_TOP_K: int = 5
     RAG_FUSION_VARIANTS: int = 3
     RAG_MAX_HISTORY_MESSAGES: int = 6
@@ -195,7 +195,7 @@ class Settings(BaseSettings):
     # ── 服务 ──
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
     LOG_LEVEL: str = "INFO"
 
     @model_validator(mode="after")

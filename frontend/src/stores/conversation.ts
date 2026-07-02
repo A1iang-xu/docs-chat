@@ -39,6 +39,13 @@ export const useConversationStore = defineStore('conversation', () => {
     activeId.value = id
   }
 
+  function updateConversation(id: string, partial: Partial<Conversation>) {
+    const index = conversations.value.findIndex((c) => c.id === id)
+    if (index !== -1) {
+      conversations.value[index] = { ...conversations.value[index], ...partial }
+    }
+  }
+
   return {
     conversations,
     activeId,
@@ -47,5 +54,6 @@ export const useConversationStore = defineStore('conversation', () => {
     fetchConversations,
     createConversation,
     setActive,
+    updateConversation,
   }
 })

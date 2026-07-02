@@ -1,316 +1,320 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue'
-import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
-import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
+import { useLibraryStore } from '@/stores/libraryStore'
 import { useConversationStore } from '@/stores/conversation'
-import { useMessageStore } from '@/stores/message'
 import { useSSE } from '@/composables/useSSE'
-import api from '@/utils/api'
+import { api } from '@/utils/api'
+import type { ChatMessage } from '@/types'
+
 import ConversationSidebar from '@/components/ConversationSidebar.vue'
-import ChatMessage from '@/components/ChatMessage.vue'
+import ChatMessageComponent from '@/components/ChatMessage.vue'
 import MessageInput from '@/components/MessageInput.vue'
-import DocumentUploader from '@/components/DocumentUploader.vue'
-import ErrorBoundary from '@/components/ErrorBoundary.vue'
-import type { Message, DocumentMeta } from '@/types'
-import LoadingSkeleton from '@/components/LoadingSkeleton.vue'
-import { useLibraryStore } from '@/stores/libraryStore'  // v4.0
-import { useHistory } from '@/composables/useHistory'  // v4.4
 
-// v4.4: replay prop（从历史侧边栏触发的重放）
-const props = defineProps<{
-  replay?: { query: string; library: string | null } | null
-}>()
+const route = useRoute()
+const libraryStore = useLibraryStore()
+const conversationStore = useConversationStore()
 
-const emit = defineEmits<{
-  (e: 'replay-consumed'): void
-}>()
-
+const messages = ref<ChatMessage[]>([])
+const isSending = ref(false)
 const sidebarOpen = ref(false)
+const sourcesPanelOpen = ref(false)
+const messagesContainer = ref<HTMLElement | null>(null)
+const isMobile = ref(false)
 
-function toggleSidebar() {
+const activeConversation = computed(() => {
+  return conversationStore.conversations.find(c => c.id === conversationStore.activeId)
+})
+
+const toggleSidebar = () => {
   sidebarOpen.value = !sidebarOpen.value
 }
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
-const conversationStore = useConversationStore()
-const messageStore = useMessageStore()
-const libraryStore = useLibraryStore()  // v4.0
-
-const { content, sources, isStreaming, error, connect, abort, stageLabel, faithfulnessWarning, cacheHit } = useSSE({
-  maxRetries: 2,
-  retryBaseMs: 1000,
-  heartbeatTimeoutMs: 30_000,
-})
-
-const isSending = ref(false)
-const assistantMsgId = ref<string | null>(null)
-const messageContainer = ref<HTMLElement | null>(null)
-const virtualScroller = ref<{ scrollToBottom?: () => void } | null>(null)
-const uploadedDocs = ref<DocumentMeta[]>([])
-
-// 当前会话的消息列表
-const currentMessages = ref<Message[]>([])
-
-const hasDocuments = computed(() => uploadedDocs.value.length > 0)
-const readyDocCount = computed(() => uploadedDocs.value.filter((doc) => doc.status === 'ready').length)
-const runningDocCount = computed(() =>
-  uploadedDocs.value.filter((doc) => doc.status === 'queued' || doc.status === 'running').length,
-)
-
-watch(
-  () => conversationStore.activeId,
-  (newId) => {
-    if (newId) {
-      currentMessages.value = messageStore.getMessages(newId)
-    } else {
-      currentMessages.value = []
-    }
-  },
-  { immediate: true },
-)
-
-// 流式内容更新 → 实时写入 assistant 消息
-watch(content, (newContent) => {
-  if (assistantMsgId.value && conversationStore.activeId) {
-    messageStore.updateAssistantMessage(
-      conversationStore.activeId,
-      assistantMsgId.value,
-      newContent,
-      sources.value,
-    )
-    currentMessages.value = messageStore.getMessages(conversationStore.activeId!)
-    scrollToBottom()
-  }
-})
-
-watch(sources, (newSources) => {
-  if (assistantMsgId.value && conversationStore.activeId) {
-    messageStore.updateAssistantMessage(
-      conversationStore.activeId!,
-      assistantMsgId.value,
-      content.value,
-      newSources,
-    )
-    currentMessages.value = messageStore.getMessages(conversationStore.activeId!)
-  }
-})
-
-async function handleSend(text: string) {
-  if (!conversationStore.activeId) {
-    await conversationStore.createConversation('新对话')
-  }
-
-  const convId = conversationStore.activeId!
-  isSending.value = true
-
-  // v4.4: 写入查询历史
-  const { add: addHistory } = useHistory()
-  addHistory(text, libraryStore.selectedLibrary)
-
-  assistantMsgId.value = await messageStore.sendMessage(convId, text)
-  currentMessages.value = messageStore.getMessages(convId)
-
-  await nextTick()
-  scrollToBottom()
-
-  // v4.1: 构建多轮对话历史（最近6条消息）
-  const allMsgs = messageStore.getMessages(convId)
-  const history = allMsgs
-    .filter((m) => m.id !== assistantMsgId.value)
-    .slice(-6)
-    .map((m) => ({ role: m.role, content: m.content }))
-
-  await connect(`${API_BASE}/chat/stream`, {
-    conversation_id: convId,
-    content: text,
-    library: libraryStore.selectedLibrary,  // v4.0
-    history,  // v4.1: 多轮对话历史
-  })
-
-  isSending.value = false
-  assistantMsgId.value = null
+const toggleSourcesPanel = () => {
+  sourcesPanelOpen.value = !sourcesPanelOpen.value
 }
 
-// v4.4: 监听 replay prop，自动重发查询
-watch(
-  () => props.replay,
-  (newReplay) => {
-    if (newReplay) {
-      if (newReplay.library) {
-        libraryStore.setSelected(newReplay.library)
-      }
-      handleSend(newReplay.query)
-      emit('replay-consumed')
-    }
-  },
-)
-
-function handleAbort() {
-  abort()
-  isSending.value = false
-}
-
-function handleDocumentUploaded(doc: DocumentMeta) {
-  const index = uploadedDocs.value.findIndex((item) => item.id === doc.id || item.filename === doc.filename)
-  if (index >= 0) {
-    uploadedDocs.value[index] = doc
-  } else {
-    uploadedDocs.value.push(doc)
-  }
-}
-
-async function fetchDocuments() {
-  /** 页面加载时从后端同步已上传的文档列表，恢复状态 */
-  try {
-    const { data } = await api.get('/documents/')
-    // 后端返回 { filename, chunk_count, page_count } 列表
-    if (Array.isArray(data)) {
-      uploadedDocs.value = data.map((item: Record<string, unknown>) => ({
-        id: crypto.randomUUID(),
-        filename: item.filename as string,
-        pageCount: item.page_count as number || 0,
-        chunkCount: item.chunk_count as number || 0,
-        uploadedAt: new Date().toISOString(),
-        status: 'ready' as const,
-      }))
-    }
-  } catch {
-    // 后端不可用时静默失败，不影响基本聊天功能
-    console.warn('[ChatView] 无法获取文档列表')
-  }
-}
-
-function scrollToBottom() {
+const scrollToBottom = () => {
   nextTick(() => {
-    if (virtualScroller.value?.scrollToBottom) {
-      virtualScroller.value.scrollToBottom()
-      return
-    }
-    if (messageContainer.value) {
-      messageContainer.value.scrollTop = messageContainer.value.scrollHeight
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
     }
   })
+}
+
+const checkMobile = () => {
+  isMobile.value = window.innerWidth < 768
 }
 
 onMounted(() => {
-  if (!conversationStore.activeId) {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+  if (route.query.new && !conversationStore.activeId) {
     conversationStore.createConversation('新对话')
   }
-  fetchDocuments()
-  libraryStore.restore()   // v4.0: restore last library selection
-  libraryStore.fetchLibraries()  // v4.0: fetch available libraries
 })
+
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
+})
+
+// 切换对话时加载历史消息
+watch(() => conversationStore.activeId, (newId) => {
+  if (newId) {
+    const conv = conversationStore.conversations.find(c => c.id === newId)
+    if (conv) {
+      messages.value = conv.messages || []
+      scrollToBottom()
+    }
+  } else {
+    messages.value = []
+  }
+}, { immediate: true })
+
+// 选中库变更时自动存入当前对话标记
+watch(() => libraryStore.selected, (lib) => {
+  if (conversationStore.activeId && lib) {
+    const conv = conversationStore.conversations.find(c => c.id === conversationStore.activeId)
+    if (conv && conv.library !== lib) {
+      conversationStore.updateConversation(conversationStore.activeId, { library: lib })
+    }
+  }
+})
+
+const { content, sources, isStreaming, error, connect, abort } = useSSE()
+
+// Watch streaming content
+watch(content, (val) => {
+  if (!val) return
+  const last = messages.value[messages.value.length - 1]
+  if (last && last.role === 'assistant') {
+    last.content = val
+  }
+  scrollToBottom()
+})
+
+// Watch streaming done
+watch(isStreaming, (val, oldVal) => {
+  if (oldVal && !val) {
+    isSending.value = false
+    if (conversationStore.activeId) {
+      conversationStore.updateConversation(conversationStore.activeId, {
+        messages: [...messages.value],
+        updatedAt: Date.now(),
+      })
+    }
+  }
+})
+
+// Watch error
+watch(error, (err) => {
+  if (!err) return
+  isSending.value = false
+  const last = messages.value[messages.value.length - 1]
+  if (last && last.role === 'assistant') {
+    last.content = err || '抱歉，请求出错了，请稍后重试。'
+  } else {
+    messages.value = [...messages.value, { role: 'assistant', content: err || '抱歉，请求出错了，请稍后重试。' }]
+  }
+})
+
+const handleSend = async (question: string) => {
+  if (!question.trim() || isSending.value) return
+
+  const isNewConversation = !conversationStore.activeId
+  if (isNewConversation) {
+    conversationStore.createConversation('新对话')
+  }
+
+  isSending.value = true
+
+  const userMsg: ChatMessage = { role: 'user', content: question.trim() }
+  messages.value = [...messages.value, userMsg]
+  messages.value = [...messages.value, { role: 'assistant', content: '' }]
+  scrollToBottom()
+
+  try {
+    const body: Record<string, unknown> = {
+      content: question.trim(),
+      conversation_id: conversationStore.activeId,
+    }
+    if (libraryStore.selected) {
+      body.library = libraryStore.selected
+    }
+    await connect('/api/chat/stream', body)
+
+    // 新对话的第一条消息，以问题内容作为对话标题
+    if (isNewConversation && conversationStore.activeId) {
+      conversationStore.updateConversation(conversationStore.activeId, {
+        title: question.trim().slice(0, 50),
+      })
+    }
+  } catch (e: any) {
+    isSending.value = false
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant') {
+      last.content = e?.response?.data?.detail || e.message || '请求失败'
+    }
+  }
+}
+
+const handleCancelStream = () => {
+  if (isStreaming.value) {
+    abort()
+  }
+}
+
+const handleNewChat = () => {
+  conversationStore.createConversation('新对话')
+  if (isMobile.value) {
+    sidebarOpen.value = false
+  }
+}
 </script>
 
 <template>
   <div class="chat-layout">
-    <ConversationSidebar v-model:mobile-open="sidebarOpen" />
+    <!-- Sidebar -->
+    <ConversationSidebar
+      v-model:mobile-open="sidebarOpen"
+    />
 
-    <main class="chat-main">
-      <ErrorBoundary>
-        <!-- 顶部栏 -->
-        <header class="chat-header">
-          
-          <div class="header-left">
-            <h2>{{ conversationStore.activeConversation?.title || 'DocsChat' }}</h2>
-            <!-- v4.0: 库选择器 -->
+    <!-- Main chat area -->
+    <div class="chat-main">
+      <!-- Header -->
+      <header class="chat-header">
+        <div class="chat-header-left">
+          <button
+            v-if="isMobile"
+            class="hamburger-btn"
+            aria-label="切换侧边栏"
+            @click="toggleSidebar"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <h1 class="chat-title">
+            {{ activeConversation?.title || 'DocsChat' }}
+          </h1>
+        </div>
+        <div class="chat-header-right">
+          <!-- Library selector -->
+          <div class="library-selector">
+            <svg class="lib-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
             <select
-              v-if="libraryStore.libraries.length > 0"
-              :value="libraryStore.selectedLibrary"
-              @change="libraryStore.setSelected(($event.target as HTMLSelectElement).value || null)"
-              class="library-select"
+              class="lib-select"
+              :value="libraryStore.selected"
+              @change="libraryStore.setSelected(($event.target as HTMLSelectElement).value)"
             >
-              <option value="">全部库</option>
+              <option value="">全部知识库</option>
               <option
                 v-for="lib in libraryStore.libraries"
-                :key="lib.library + '@' + lib.version"
+                :key="lib.library"
                 :value="lib.library"
               >
-                {{ lib.library }}{{ lib.version !== 'latest' ? '@' + lib.version : '' }}
-                ({{ lib.chunk_count }})
+                {{ lib.library }}
               </option>
             </select>
-            <span v-if="hasDocuments" class="doc-badge">
-              知识库: {{ readyDocCount }}/{{ uploadedDocs.length }} 就绪
-              <span v-if="runningDocCount">，{{ runningDocCount }} 处理中</span>
-            </span>
           </div>
-          <div class="header-right">
-            <DocumentUploader @uploaded="handleDocumentUploaded" />
-            <button
-              v-if="isStreaming"
-              class="abort-btn"
-              @click="handleAbort"
-            >
-              停止生成
-            </button>
-          </div>
-          <button class="hamburger-btn" @click="toggleSidebar" aria-label="切换侧边栏">
-            <span></span>
-            <span></span>
-            <span></span>
-          </button>
-        </header>
-
-        <!-- 消息列表 -->
-        <div ref="messageContainer" class="message-list">
-          <DynamicScroller
-            v-if="currentMessages.length > 0"
-            ref="virtualScroller"
-            :items="currentMessages"
-            :min-item-size="96"
-            key-field="id"
-            class="virtual-message-list"
+          <!-- Sources toggle -->
+          <button
+            v-if="sources.length > 0"
+            class="header-btn"
+            :class="{ active: sourcesPanelOpen }"
+            @click="toggleSourcesPanel"
           >
-            <template #default="{ item, index, active }">
-              <DynamicScrollerItem
-                :item="item"
-                :active="active"
-                :size-dependencies="[item.content, item.sources.length]"
-                :data-index="index"
-              >
-                <ChatMessage :message="item" />
-              </DynamicScrollerItem>
-            </template>
-          </DynamicScroller>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            <span>{{ sources.length }} 来源</span>
+          </button>
+          <!-- New chat -->
+          <button class="header-btn" @click="handleNewChat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+        </div>
+      </header>
 
-          <!-- 错误提示 -->
-          <div v-if="error" class="error-banner">
-            请求失败：{{ error }}
-            <button @click="error = null">关闭</button>
+      <!-- Messages area -->
+      <div class="chat-body" :class="{ 'with-sources': sourcesPanelOpen && sources.length > 0 }">
+        <div ref="messagesContainer" class="messages-container">
+          <div v-if="messages.length === 0" class="empty-state">
+            <div class="empty-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <h2>开始对话</h2>
+            <p>选择知识库，输入你的问题，DocsChat 将为你检索文档并生成回答。</p>
           </div>
-          <!-- v4.4: 阶段指示器 -->
-          <div v-if="isStreaming && stageLabel" class="stage-indicator">
-            <span class="stage-dot"></span>
-            <span class="stage-text">{{ stageLabel }}</span>
-          </div>
-          <!-- v4.4: 缓存命中提示 -->
-          <div v-if="cacheHit && isStreaming" class="cache-hit-badge">
-            ⚡ 缓存命中
-          </div>
-          <!-- v4.4: 忠实度警告提示条 -->
-          <div v-if="faithfulnessWarning" class="faithfulness-warning">
-            {{ faithfulnessWarning }}
-          </div>
-          <!-- 骨架屏：流式生成中 -->
-          <LoadingSkeleton v-if="isStreaming && currentMessages.length > 0" :lines="4" />
-          <!-- 空状态 -->
-          <div v-if="currentMessages.length === 0 && !isStreaming" class="empty-state">
-            <h3>DocsChat</h3>
-            <p>上传 PDF 文档并开始提问，我会基于文档内容为你解答</p>
-            <p class="empty-hint">
-              支持 Markdown 格式回答、代码高亮、来源引用标注
-            </p>
+
+          <div v-else class="messages-list">
+            <ChatMessageComponent
+              v-for="(msg, idx) in messages"
+              :key="idx"
+              :message="msg"
+              :is-streaming="isStreaming && idx === messages.length - 1 && msg.role === 'assistant'"
+            />
           </div>
         </div>
 
-        <!-- 输入区域 -->
-        <MessageInput
-          v-model:is-sending="isSending"
-          @send="handleSend"
-        />
-      </ErrorBoundary>
-    </main>
+        <!-- Sources panel -->
+        <aside v-if="sourcesPanelOpen && sources.length > 0" class="sources-panel">
+          <div class="sources-panel-header">
+            <h3>参考来源</h3>
+            <button class="sources-close-btn" @click="sourcesPanelOpen = false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="sources-list">
+            <div v-for="(src, idx) in sources" :key="idx" class="source-card">
+              <div class="source-index">{{ src.index || idx + 1 }}</div>
+              <div class="source-info">
+                <div class="source-name">{{ src.documentName || src.sourceUrl?.split('/').pop() || '未知文档' }}</div>
+                <div class="source-page" v-if="src.page">第 {{ src.page }} 页</div>
+                <div class="source-excerpt">{{ src.content?.slice(0, 200) }}{{ src.content?.length > 200 ? '...' : '' }}</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Input area -->
+      <div class="chat-footer">
+        <div class="input-wrapper">
+          <MessageInput
+            v-model:is-sending="isSending"
+            @send="handleSend"
+          />
+          <button
+            v-if="isStreaming"
+            class="stop-btn"
+            @click="handleCancelStream"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+            </svg>
+            停止
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -321,199 +325,421 @@ onMounted(() => {
   overflow: hidden;
   background: var(--background);
 }
+
 .chat-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  height: 100vh;
 }
 
+/* Header */
 .chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.65rem 1.5rem;
+  padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--background);
+  flex-shrink: 0;
 }
-.header-left {
+
+.chat-header-left {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
 }
-.header-left h2 {
+
+.hamburger-btn {
+  display: none;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  color: var(--foreground);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  align-items: center;
+  justify-content: center;
+}
+
+.hamburger-btn:hover {
+  background: var(--muted);
+}
+
+.hamburger-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.chat-title {
   font-size: 1rem;
   font-weight: 600;
   color: var(--foreground);
-}
-.doc-badge {
-  font-size: 0.75rem;
-  color: var(--success-text);
-  background: var(--success-subtle);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-}
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.abort-btn {
-  padding: 0.45rem 1rem;
-  background: var(--destructive-subtle);
-  color: var(--destructive);
-  border: 1px solid var(--destructive-border);
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.abort-btn:hover {
-  background: var(--destructive-border);
-}
-
-.message-list {
-  flex: 1;
+  white-space: nowrap;
   overflow: hidden;
-  padding: 0;
+  text-overflow: ellipsis;
 }
 
-.virtual-message-list {
-  height: 100%;
-}
-
-.error-banner {
-  margin: 1rem 1.5rem;
-  padding: 0.75rem 1rem;
-  background: var(--destructive-subtle);
-  border: 1px solid var(--destructive-border);
-  border-radius: var(--radius-sm);
-  color: var(--destructive-text);
-  font-size: 0.85rem;
+.chat-header-right {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
-.error-banner button {
+
+.library-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.6rem;
+}
+
+.lib-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.lib-select {
   background: none;
   border: none;
-  color: var(--destructive-text);
-  font-weight: 600;
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-family: inherit;
   cursor: pointer;
+  outline: none;
+  max-width: 140px;
 }
 
-/* v4.4: 阶段指示器 */
-.stage-indicator {
+.header-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  background: var(--brand-subtle);
+  gap: 0.3rem;
+  padding: 0.35rem 0.6rem;
+  background: none;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  margin: 8px 0;
+  color: var(--muted-foreground);
   font-size: 0.8rem;
-  color: var(--primary);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
 }
-.stage-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+
+.header-btn:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.header-btn.active {
   background: var(--primary);
-  animation: stage-pulse 1.2s infinite;
-}
-@keyframes stage-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  color: var(--primary-foreground);
+  border-color: var(--primary);
 }
 
-/* v4.4: 忠实度警告 */
-.faithfulness-warning {
-  padding: 6px 16px;
-  background: var(--warning-subtle);
-  border-left: 3px solid var(--warning);
-  border-radius: var(--radius-sm);
-  margin: 8px 0;
-  font-size: 0.8rem;
-  color: var(--warning-text);
+.header-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
-/* v4.4: 缓存命中提示 */
-.cache-hit-badge {
-  display: inline-block;
-  padding: 4px 12px;
-  background: var(--success-subtle);
-  border: 1px solid var(--success-border);
-  border-radius: 12px;
-  margin: 8px 0;
-  font-size: 0.78rem;
-  color: var(--success-text);
-  font-weight: 600;
+/* Body */
+.chat-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
 }
 
-/* 空状态 */
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+  scroll-behavior: smooth;
+}
+
+/* Empty state */
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 60vh;
+  height: 100%;
   text-align: center;
   padding: 2rem;
 }
-.empty-state h3 {
-  font-size: 2rem;
-  font-weight: 700;
-  color: var(--primary);
-  margin-bottom: 0.75rem;
-}
-.empty-state p {
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
   color: var(--muted-foreground);
-  font-size: 0.95rem;
-}
-.empty-hint {
-  margin-top: 0.5rem;
-  font-size: 0.85rem !important;
-}
-.hamburger-btn {
-  display: none;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0.4rem;
-  flex-direction: column;
-  gap: 4px;
+  margin-bottom: 1rem;
+  opacity: 0.5;
 }
 
-/* v4.0: 库选择器 */
-.library-select {
-  padding: 0.3rem 0.6rem;
-  background: var(--muted);
+.empty-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.empty-state h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
   color: var(--foreground);
+  margin: 0 0 0.5rem;
+}
+
+.empty-state p {
+  font-size: 0.9rem;
+  color: var(--muted-foreground);
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+/* Messages list */
+.messages-list {
+  max-width: 768px;
+  margin: 0 auto;
+}
+
+/* Sources panel */
+.sources-panel {
+  width: 300px;
+  min-width: 300px;
+  border-left: 1px solid var(--border);
+  background: var(--muted);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sources-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sources-panel-header h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 0;
+}
+
+.sources-close-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.sources-close-btn:hover {
+  background: var(--border);
+  color: var(--foreground);
+}
+
+.sources-close-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sources-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.source-card {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem;
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 0.78rem;
-  cursor: pointer;
-  max-width: 220px;
+  margin-bottom: 0.5rem;
 }
-.library-select:focus {
+
+.source-index {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.source-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.source-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-page {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  margin-bottom: 0.3rem;
+}
+
+.source-excerpt {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* Footer */
+.chat-footer {
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+  flex-shrink: 0;
+}
+
+.input-wrapper {
+  max-width: 768px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.input-wrapper :deep(.input-area) {
+  flex: 1;
+  padding: 0;
+  border: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.input-wrapper :deep(.input-box) {
+  flex: 1;
+  padding: 0.6rem 0.85rem;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: none;
+  max-height: 200px;
+  line-height: 1.5;
   outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-wrapper :deep(.input-box:focus) {
   border-color: var(--primary);
 }
 
-.hamburger-btn span {
-  display: block;
-  width: 20px;
-  height: 2px;
-  background: var(--foreground);
-  border-radius: 1px;
-  transition: transform 0.2s;
+.input-wrapper :deep(.input-box:disabled) {
+  opacity: 0.5;
 }
 
+.input-wrapper :deep(.send-btn) {
+  padding: 0.6rem 0.85rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.input-wrapper :deep(.send-btn:hover:not(:disabled)) {
+  opacity: 0.85;
+}
+
+.input-wrapper :deep(.send-btn:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stop-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: opacity 0.2s;
+}
+
+.stop-btn:hover {
+  opacity: 0.85;
+}
+
+.stop-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Mobile */
 @media (max-width: 767px) {
   .hamburger-btn {
     display: flex;
+  }
+
+  .chat-header {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .messages-container {
+    padding: 0.75rem 1rem;
+  }
+
+  .chat-footer {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .sources-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 300px;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
   }
 }
 </style>

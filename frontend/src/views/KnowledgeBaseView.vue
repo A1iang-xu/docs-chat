@@ -88,6 +88,121 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const deletingLibrary = ref<string | null>(null)
 const deletingDocument = ref<string | null>(null)
 
+// 自定义确认对话框（替代 confirm/alert，避免 IDE 预览浏览器 React #185 崩溃）
+const confirmDialog = ref({
+  show: false,
+  title: '',
+  message: '',
+  type: 'danger' as 'danger' | 'info',
+  onConfirm: null as (() => void) | null,
+})
+
+const showConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'info' = 'danger') => {
+  confirmDialog.value = { show: true, title, message, type, onConfirm }
+}
+
+const hideConfirm = () => {
+  confirmDialog.value = { show: false, title: '', message: '', type: 'danger', onConfirm: null }
+}
+
+const handleConfirm = () => {
+  const cb = confirmDialog.value.onConfirm
+  hideConfirm()
+  if (cb) cb()
+}
+
+// 自定义错误提示（替代 alert）
+const toastMessage = ref('')
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+const showToast = (msg: string) => {
+  toastMessage.value = msg
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastMessage.value = '' }, 4000)
+}
+
+// URL 入库任务轮询
+const ingestJobId = ref<string | null>(null)
+const ingestJobStatus = ref('')
+const ingestJobPageCount = ref(0)
+const ingestJobChunkCount = ref(0)
+const ingestJobError = ref<string | null>(null)
+let ingestPollTimer: ReturnType<typeof setInterval> | null = null
+
+const startPolling = () => {
+  stopPolling()
+  ingestPollTimer = setInterval(async () => {
+    if (!ingestJobId.value) return
+    try {
+      const { data } = await api.get(`/documents/jobs/${ingestJobId.value}`)
+      ingestJobStatus.value = data.status
+      ingestJobPageCount.value = data.page_count || 0
+      ingestJobChunkCount.value = data.chunk_count || 0
+      ingestJobError.value = data.error || null
+
+      if (data.status === 'ready' || data.status === 'failed') {
+        stopPolling()
+        ingesting.value = false
+        if (data.status === 'ready') {
+          // 延迟一下再关闭，让用户看到完成状态
+          setTimeout(() => {
+            hideIngestModal()
+            fetchAll()
+          }, 800)
+        }
+      }
+    } catch {
+      // 轮询出错不中断，继续重试
+    }
+  }, 2000)
+}
+
+const stopPolling = () => {
+  if (ingestPollTimer) {
+    clearInterval(ingestPollTimer)
+    ingestPollTimer = null
+  }
+}
+
+/** 入库流程阶段（动态，根据 job 状态更新） */
+const ingestPipelineStages = computed(() => {
+  const status = ingestJobStatus.value
+  const stages = [
+    { key: 'receive', label: '文档接收' },
+    { key: 'extract', label: '文本提取' },
+    { key: 'chunk', label: '分块处理' },
+    { key: 'vectorize', label: '向量化' },
+    { key: 'complete', label: '入库完成' },
+  ]
+
+  // 状态映射：当前激活到哪个阶段
+  const statusIndex: Record<string, number> = {
+    '': -1,           // 初始（未开始）
+    'queued': 0,      // 已接收，等待处理
+    'running': 2,     // 正在处理（文本提取+分块）
+    'ready': 4,       // 全部完成
+    'failed': -1,     // 失败
+  }
+  const activeIdx = statusIndex[status] ?? -1
+
+  return stages.map((s, i) => {
+    let state: 'completed' | 'active' | 'pending'
+    if (status === 'failed') {
+      state = 'pending'
+    } else if (i < activeIdx) {
+      state = 'completed'
+    } else if (i === activeIdx) {
+      state = 'active'
+    } else {
+      state = 'pending'
+    }
+    return { ...s, state }
+  })
+})
+
+/** 判断是否正在轮询入库任务 */
+const isIngestPolling = computed(() => ingestJobId.value !== null && ingesting.value)
+
 // ═══════════════════════════════════════════
 // 计算属性
 // ═══════════════════════════════════════════
@@ -140,7 +255,8 @@ const groupedDocuments = computed(() => {
   const groups: Record<string, DocumentItem[]> = {}
 
   for (const doc of documents.value) {
-    const lib = doc.library || '未分类'
+    const lib = doc.library
+    if (!lib) continue  // 跳过无 library 的残留文档
     if (!groups[lib]) groups[lib] = []
     groups[lib].push(doc)
   }
@@ -194,9 +310,17 @@ const statusOptions = ['全部状态', '已就绪', '处理中', '失败']
 const fetchLibraries = async () => {
   try {
     const { data } = await api.get('/libraries/')
-    libraries.value = Array.isArray(data) ? data : []
+    const backendLibs: LibraryItem[] = Array.isArray(data) ? data : []
+    // 仅保留乐观添加的空库（chunk_count===0），不保留已从后端删除的库
+    const backendNames = new Set(backendLibs.map((l) => l.library))
+    for (const lib of libraries.value) {
+      if (!backendNames.has(lib.library) && lib.chunk_count === 0) {
+        backendLibs.push(lib)
+      }
+    }
+    libraries.value = backendLibs
   } catch {
-    libraries.value = []
+    // 保持现有数据不变
   }
 }
 
@@ -234,30 +358,40 @@ const fetchAll = async () => {
 // 知识库操作
 // ═══════════════════════════════════════════
 
-const deleteLibrary = async (library: string) => {
-  if (!confirm(`确定要删除知识库「${library}」吗？该操作会同时删除库内所有文档，且不可撤销。`)) return
-  deletingLibrary.value = library
-  try {
-    await api.delete(`/libraries/${library}`)
-    await fetchAll()
-  } catch (e: any) {
-    alert(e?.response?.data?.detail || e.message || '删除知识库失败')
-  } finally {
-    deletingLibrary.value = null
-  }
+const deleteLibrary = (library: string) => {
+  showConfirm(
+    '删除知识库',
+    `确定要删除知识库「${library}」吗？该操作会同时删除库内所有文档，且不可撤销。`,
+    async () => {
+      deletingLibrary.value = library
+      try {
+        await api.delete(`/libraries/${library}`)
+        await fetchAll()
+      } catch (e: any) {
+        showToast(e?.response?.data?.detail || e.message || '删除知识库失败')
+      } finally {
+        deletingLibrary.value = null
+      }
+    },
+  )
 }
 
-const deleteDocument = async (docId: string, filename: string) => {
-  if (!confirm(`确定要删除文档「${filename}」吗？此操作不可撤销。`)) return
-  deletingDocument.value = docId
-  try {
-    await api.delete(`/documents/${docId}`)
-    await fetchAll()
-  } catch (e: any) {
-    alert(e?.response?.data?.detail || e.message || '删除文档失败')
-  } finally {
-    deletingDocument.value = null
-  }
+const deleteDocument = (docId: string, filename: string) => {
+  showConfirm(
+    '删除文档',
+    `确定要删除文档「${filename}」吗？此操作不可撤销。`,
+    async () => {
+      deletingDocument.value = docId
+      try {
+        await api.delete(`/documents/${docId}`)
+        await fetchAll()
+      } catch (e: any) {
+        showToast(e?.response?.data?.detail || e.message || '删除文档失败')
+      } finally {
+        deletingDocument.value = null
+      }
+    },
+  )
 }
 
 const showCreateKbForm = () => {
@@ -280,6 +414,11 @@ const submitCreateKb = async () => {
   createKbError.value = ''
   try {
     await api.post('/libraries/', { library: name })
+    // 乐观更新：立即将新库加入本地列表
+    const exists = libraries.value.some((l) => l.library === name)
+    if (!exists) {
+      libraries.value = [...libraries.value, { library: name, chunk_count: 0 }]
+    }
     hideCreateKbForm()
     await fetchAll()
   } catch (e: any) {
@@ -332,6 +471,13 @@ const showIngestModal = () => {
 }
 
 const hideIngestModal = () => {
+  stopPolling()
+  ingestJobId.value = null
+  ingestJobStatus.value = ''
+  ingestJobPageCount.value = 0
+  ingestJobChunkCount.value = 0
+  ingestJobError.value = null
+  ingesting.value = false
   ingestModalOpen.value = false
 }
 
@@ -377,28 +523,40 @@ const startIngest = async () => {
       }
       const formData = new FormData()
       formData.append('file', ingestFile.value)
-      formData.append('filename', ingestDocName.value.trim())
-      formData.append('library', ingestTargetLibrary.value)
-      await api.post('/documents/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
+      // library 作为 query 参数传递，不是 form 字段
+      const { data } = await api.post(
+        `/documents/upload?library=${encodeURIComponent(ingestTargetLibrary.value)}`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+      // 开始轮询任务状态，不关闭弹窗
+      ingestJobId.value = data.job_id
+      ingestJobStatus.value = data.status || 'queued'
+      ingestJobPageCount.value = data.page_count || 0
+      ingestJobChunkCount.value = data.chunk_count || 0
+      ingestJobError.value = data.error || null
+      startPolling()
     } else {
       if (!ingestUrl.value.trim()) {
         ingestError.value = '请输入文档 URL'
         ingesting.value = false
         return
       }
-      await api.post('/documents/fetch', {
+      const { data } = await api.post('/documents/fetch', {
         filename: ingestDocName.value.trim(),
         library: ingestTargetLibrary.value,
         url: ingestUrl.value.trim(),
       })
+      // 开始轮询任务状态，不关闭弹窗
+      ingestJobId.value = data.job_id
+      ingestJobStatus.value = data.status || 'queued'
+      ingestJobPageCount.value = data.page_count || 0
+      ingestJobChunkCount.value = data.chunk_count || 0
+      ingestJobError.value = data.error || null
+      startPolling()
     }
-    hideIngestModal()
-    await fetchAll()
   } catch (e: any) {
     ingestError.value = e?.response?.data?.detail || e.message || '入库失败'
-  } finally {
     ingesting.value = false
   }
 }
@@ -430,7 +588,10 @@ const formatChunkCount = (doc: DocumentItem): string => {
 }
 
 const formatPageCount = (doc: DocumentItem): string => {
-  if (doc.status === 'ready') return String(doc.page_count || 0)
+  if (doc.status === 'ready') {
+    if ((doc.page_count || 0) === 0) return '--'
+    return String(doc.page_count)
+  }
   return '--'
 }
 
@@ -455,6 +616,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeStatusSelect)
+  stopPolling()
+  if (toastTimer) clearTimeout(toastTimer)
 })
 </script>
 
@@ -547,6 +710,7 @@ onUnmounted(() => {
             </div>
             <div class="kb-doc-group-actions" @click.stop>
               <button
+                v-if="libraries.some(l => l.library === group.name)"
                 class="btn btn-ghost btn-sm"
                 :disabled="deletingLibrary === group.name"
                 @click="deleteLibrary(group.name)"
@@ -557,31 +721,31 @@ onUnmounted(() => {
             <table class="kb-doc-table" v-if="group.documents.length > 0">
               <thead>
                 <tr>
-                  <th>文档名</th>
-                  <th>状态</th>
-                  <th>Chunk 数</th>
-                  <th>页数</th>
-                  <th>入库时间</th>
-                  <th>操作</th>
+                  <th class="col-name">文档名</th>
+                  <th class="col-status">状态</th>
+                  <th class="col-num">Chunk 数</th>
+                  <th class="col-num">页数</th>
+                  <th class="col-date">入库时间</th>
+                  <th class="col-action">操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="doc in group.documents" :key="doc.id">
-                  <td>
+                  <td class="col-name">
                     <span class="file-name">
                       <svg class="file-name-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
                       {{ fileBase(doc.filename) }}<span class="file-name-ext">{{ fileExt(doc.filename) }}</span>
                     </span>
                   </td>
-                  <td>
+                  <td class="col-status">
                     <span class="status-pill" :class="statusClass(doc.status)">
                       <span class="dot"></span>{{ statusLabel(doc.status) }}
                     </span>
                   </td>
-                  <td class="mono" :class="{ 'muted-cell': doc.status !== 'ready' }">{{ formatChunkCount(doc) }}</td>
-                  <td class="mono" :class="{ 'muted-cell': doc.status !== 'ready' }">{{ formatPageCount(doc) }}</td>
-                  <td class="date-cell">{{ formatDate(doc.created_at) }}</td>
-                  <td>
+                  <td class="col-num mono" :class="{ 'muted-cell': doc.status !== 'ready' }">{{ formatChunkCount(doc) }}</td>
+                  <td class="col-num mono" :class="{ 'muted-cell': doc.status !== 'ready' }">{{ formatPageCount(doc) }}</td>
+                  <td class="col-date date-cell">{{ formatDate(doc.created_at) }}</td>
+                  <td class="col-action">
                     <div class="action-links">
                       <a
                         v-if="doc.status === 'ready'"
@@ -699,44 +863,44 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Ingest Pipeline Preview -->
+          <!-- Ingest Pipeline Preview (dynamic for URL, static for PDF) -->
           <div class="ingest-pipeline">
-            <div class="ingest-pipeline-title">入库流程预览</div>
-            <div class="ingest-pipeline-stages">
-              <div class="ingest-stage">
-                <div class="ingest-stage-dot completed"></div>
-                <span>文档接收</span>
-              </div>
-              <div class="ingest-stage-line completed"></div>
-              <div class="ingest-stage">
-                <div class="ingest-stage-dot completed"></div>
-                <span>文本提取</span>
-              </div>
-              <div class="ingest-stage-line active"></div>
-              <div class="ingest-stage">
-                <div class="ingest-stage-dot active"></div>
-                <span>分块处理</span>
-              </div>
-              <div class="ingest-stage-line pending"></div>
-              <div class="ingest-stage">
-                <div class="ingest-stage-dot pending"></div>
-                <span>向量化</span>
-              </div>
-              <div class="ingest-stage-line pending"></div>
-              <div class="ingest-stage">
-                <div class="ingest-stage-dot pending"></div>
-                <span>入库完成</span>
-              </div>
+            <div class="ingest-pipeline-title">
+              <template v-if="isIngestPolling">
+                入库进度 — {{ ingestJobStatus === 'queued' ? '排队中' : ingestJobStatus === 'running' ? '处理中' : ingestJobStatus === 'ready' ? '完成' : ingestJobStatus === 'failed' ? '失败' : '...' }}
+                <span v-if="ingestJobPageCount > 0" style="margin-left:8px;font-weight:400;">{{ ingestJobPageCount }} 页</span>
+                <span v-if="ingestJobChunkCount > 0" style="margin-left:4px;font-weight:400;">{{ ingestJobChunkCount }} chunks</span>
+              </template>
+              <template v-else>入库流程预览</template>
             </div>
+            <div class="ingest-pipeline-stages">
+              <template v-for="(stage, idx) in ingestPipelineStages" :key="stage.key">
+                <div class="ingest-stage">
+                  <div class="ingest-stage-dot" :class="isIngestPolling ? stage.state : (idx === 0 ? 'completed' : idx === 1 ? 'active' : 'pending')"></div>
+                  <span>{{ stage.label }}</span>
+                </div>
+                <div v-if="idx < ingestPipelineStages.length - 1" class="ingest-stage-line" :class="isIngestPolling ? stage.state : (idx === 0 ? 'completed' : 'pending')"></div>
+              </template>
+            </div>
+            <div v-if="ingestJobError" class="ingest-error" style="margin-top:10px;">{{ ingestJobError }}</div>
           </div>
 
           <div v-if="ingestError" class="ingest-error">{{ ingestError }}</div>
 
           <div class="ingest-modal-actions">
-            <button class="btn btn-primary" :disabled="ingesting" @click="startIngest">
-              {{ ingesting ? '入库中...' : '开始入库' }}
-            </button>
-            <button class="btn btn-outline" @click="hideIngestModal">取消</button>
+            <template v-if="isIngestPolling && ingestJobStatus !== 'failed'">
+              <button class="btn btn-outline" @click="hideIngestModal">取消</button>
+            </template>
+            <template v-else-if="ingestJobStatus === 'failed'">
+              <span class="ingest-error" style="margin:0;flex:1;">入库失败：{{ ingestJobError || '未知错误' }}</span>
+              <button class="btn btn-outline" @click="hideIngestModal">关闭</button>
+            </template>
+            <template v-else>
+              <button class="btn btn-primary" :disabled="ingesting" @click="startIngest">
+                {{ ingesting ? '入库中...' : '开始入库' }}
+              </button>
+              <button class="btn btn-outline" @click="hideIngestModal">取消</button>
+            </template>
           </div>
         </div>
       </div>
@@ -769,6 +933,33 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+
+      <!-- Confirm Dialog (替代 confirm/alert，避免 IDE 预览浏览器 React #185) -->
+      <Teleport to="body">
+        <div v-if="confirmDialog.show" class="confirm-overlay" @click.self="hideConfirm">
+          <div class="confirm-dialog">
+            <div class="confirm-dialog-header">
+              <h4>{{ confirmDialog.title }}</h4>
+            </div>
+            <div class="confirm-dialog-body">
+              <p>{{ confirmDialog.message }}</p>
+            </div>
+            <div class="confirm-dialog-actions">
+              <button class="btn btn-outline" @click="hideConfirm">取消</button>
+              <button
+                class="btn"
+                :class="confirmDialog.type === 'danger' ? 'btn-danger' : 'btn-primary'"
+                @click="handleConfirm"
+              >确定</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- Toast Notification (替代 alert) -->
+      <Teleport to="body">
+        <div v-if="toastMessage" class="toast-notification">{{ toastMessage }}</div>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -1129,6 +1320,7 @@ onUnmounted(() => {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: fixed;
 }
 
 .kb-doc-table thead th {
@@ -1143,11 +1335,23 @@ onUnmounted(() => {
   background: var(--card);
 }
 
+.kb-doc-table thead th.col-name { width: 34%; }
+.kb-doc-table thead th.col-status { width: 12%; }
+.kb-doc-table thead th.col-num { width: 10%; text-align: right; }
+.kb-doc-table thead th.col-date { width: 22%; text-align: right; }
+.kb-doc-table thead th.col-action { width: 12%; text-align: center; }
+
 .kb-doc-table tbody td {
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   color: var(--foreground);
 }
+
+.kb-doc-table tbody td.col-name { text-align: left; }
+.kb-doc-table tbody td.col-status { text-align: left; }
+.kb-doc-table tbody td.col-num { text-align: right; }
+.kb-doc-table tbody td.col-date { text-align: right; }
+.kb-doc-table tbody td.col-action { text-align: center; }
 
 .kb-doc-table tbody tr:last-child td {
   border-bottom: none;
@@ -1529,6 +1733,99 @@ onUnmounted(() => {
   color: var(--destructive-text);
   font-size: 13px;
   margin-bottom: 12px;
+}
+
+/* ---- Confirm Dialog ---- */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in 0.15s ease;
+}
+
+.confirm-dialog {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  width: 400px;
+  max-width: 90vw;
+  animation: scale-in 0.15s ease;
+}
+
+.confirm-dialog-header {
+  padding: 16px 20px 0;
+}
+
+.confirm-dialog-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.confirm-dialog-body {
+  padding: 10px 20px 16px;
+}
+
+.confirm-dialog-body p {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.btn-danger {
+  background: var(--destructive);
+  color: #fff;
+  border-color: var(--destructive);
+}
+
+.btn-danger:hover {
+  opacity: 0.9;
+}
+
+/* ---- Toast Notification ---- */
+.toast-notification {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  background: var(--foreground);
+  color: var(--background);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 1001;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: toast-in 0.25s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* ---- Responsive ---- */

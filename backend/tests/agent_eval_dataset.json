@@ -1,0 +1,152 @@
+[
+  {
+    "query": "什么是 LangChain Agent？Agent 和普通 LLM 有什么区别？",
+    "expected_keywords": ["Agent", "reasoning engine", "actions", "tools", "LLM"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "LangChain 推荐使用什么框架来构建 Agent？为什么 AgentExecutor 被淘汰？",
+    "expected_keywords": ["LangGraph", "AgentExecutor", "flexibility", "customizable", "migrate"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "如何从 AgentExecutor 迁移到 LangGraph？",
+    "expected_keywords": ["migration guide", "AgentExecutor", "LangGraph", "how_to"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "LangChain 中预构建的 Agent 架构在哪里可以找到？",
+    "expected_keywords": ["pre-built agents", "create_react_agent", "langgraph.prebuilt"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "Agent 系统的核心工作机制是什么？",
+    "expected_keywords": ["reasoning engine", "decide actions", "execute", "high-level task"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "LangGraph 的核心功能是什么？它主要解决什么问题？",
+    "expected_keywords": ["orchestration", "stateful", "durable execution", "human-in-the-loop", "persistence"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "如何在 LangGraph 中创建一个简单的 StateGraph？",
+    "expected_keywords": ["StateGraph", "MessagesState", "add_node", "add_edge", "compile"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "LangGraph 有哪些核心优势？",
+    "expected_keywords": ["persistence", "human-in-the-loop", "memory", "debugging", "deployment"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "LangGraph 和 LangChain、Deep Agents、LangSmith 之间是什么关系？",
+    "expected_keywords": ["orchestration runtime", "agent framework", "harness", "observability", "ecosystem"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "LangGraph 的设计灵感来自哪些技术？",
+    "expected_keywords": ["Pregel", "Apache Beam", "NetworkX"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "OpenAI Agents SDK 的核心原语有哪些？",
+    "expected_keywords": ["Agents", "Handoffs", "Guardrails", "tracing"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "OpenAI Agents SDK 和直接使用 Responses API 有什么区别？各自适合什么场景？",
+    "expected_keywords": ["Responses API", "own the loop", "runtime", "turns", "guardrails"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "如何使用 OpenAI Agents SDK 创建一个带工具的 Agent？",
+    "expected_keywords": ["Agent", "Runner", "run_sync", "function tools", "instructions"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "OpenAI Agents SDK 有哪些主要特性？",
+    "expected_keywords": ["agent loop", "handoffs", "guardrails", "tracing", "sessions", "MCP"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "什么是 Agents as Tools / Handoffs 机制？",
+    "expected_keywords": ["agents as tools", "handoffs", "delegate", "coordinate", "multi-agent"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "CrewAI 的架构中 Flow 和 Crew 分别扮演什么角色？",
+    "expected_keywords": ["Flow", "Crew", "backbone", "manager", "state management"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "CrewAI 中 Flow 和 Crew 如何协同工作？",
+    "expected_keywords": ["Flow triggers", "delegates", "Crew collaborates", "returns result"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "在 CrewAI 中，什么时候应该用 Flow，什么时候应该用 Crew？",
+    "expected_keywords": ["start with Flow", "overall structure", "complex task", "autonomy"],
+    "query_type": "synthesis",
+    "category": "comparison"
+  },
+  {
+    "query": "CrewAI 的 Crews 提供了哪些核心能力？",
+    "expected_keywords": ["role-playing agents", "autonomous collaboration", "task delegation"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "CrewAI 支持与哪些工具集成？",
+    "expected_keywords": ["any API", "database", "local tool", "LLM"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "什么是 AutoGen AgentChat？它和 autogen-core 有什么区别？",
+    "expected_keywords": ["high-level API", "multi-agent", "preset behaviors", "autogen-core"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "如何使用 AutoGen AgentChat 创建一个带工具的 AssistantAgent？",
+    "expected_keywords": ["AssistantAgent", "model_client", "tools", "run_stream", "Console"],
+    "query_type": "synthesis",
+    "category": "code"
+  },
+  {
+    "query": "AutoGen AgentChat 中 Agent 和 Team 是什么关系？",
+    "expected_keywords": ["Agents", "Teams", "multi-agent design patterns", "collaboration"],
+    "query_type": "concept_explain",
+    "category": "concept"
+  },
+  {
+    "query": "AutoGen 支持哪些多 Agent 协作模式？",
+    "expected_keywords": ["Selector Group Chat", "Swarm", "Magentic-One", "GraphFlow"],
+    "query_type": "fact_lookup",
+    "category": "fact"
+  },
+  {
+    "query": "AutoGen AgentChat 如何实现多 Agent 之间的消息协调？",
+    "expected_keywords": ["Selector Group Chat", "shared context", "centralized selector", "tool-based"],
+    "query_type": "synthesis",
+    "category": "concept"
+  }
+]

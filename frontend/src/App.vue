@@ -120,8 +120,8 @@ import AppSidebar from '@/components/AppSidebar.vue'
   --sidebar-border: var(--brand-200);
   --sidebar-ring: var(--brand-400);
 
-  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, monospace;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   --tracking-normal: 0em;
   --tracking-tight: -0.012em;
 

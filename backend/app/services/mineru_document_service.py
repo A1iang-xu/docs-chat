@@ -39,7 +39,7 @@ class MinerUDocumentService:
         self.output_dir = Path(settings.MINERU_OUTPUT_DIR)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    async def load_and_split(self, file_path: Path) -> List[DocumentChunk]:
+    async def load_and_split(self, file_path: Path, library: str = "", created_at: str = "") -> List[DocumentChunk]:
         """主入口：按 PARSER_TYPE / MINERU_URL 选择解析路径。"""
         parser_type = settings.PARSER_TYPE
 
@@ -47,7 +47,7 @@ class MinerUDocumentService:
             try:
                 markdown = await self._parse_with_mineru_api(file_path)
                 if markdown:
-                    chunks = self._split_markdown(markdown, file_path.name)
+                    chunks = self._split_markdown(markdown, file_path.name, library, created_at)
                     if chunks:
                         logger.info("MinerU API 解析成功: %s chunks=%s", file_path.name, len(chunks))
                         return chunks
@@ -58,7 +58,7 @@ class MinerUDocumentService:
         if parser_type == "mineru" and settings.MINERU_COMMAND:
             try:
                 markdown = await self._parse_with_mineru(file_path)
-                chunks = self._split_markdown(markdown, file_path.name)
+                chunks = self._split_markdown(markdown, file_path.name, library, created_at)
                 if chunks:
                     logger.info("MinerU CLI 解析成功: %s chunks=%s", file_path.name, len(chunks))
                     return chunks
@@ -66,7 +66,7 @@ class MinerUDocumentService:
             except Exception as exc:
                 logger.exception("MinerU 解析失败，回退 PyPDFLoader: %s", exc)
 
-        chunks = await asyncio.to_thread(self._parse_with_pypdf, file_path)
+        chunks = await asyncio.to_thread(self._parse_with_pypdf, file_path, library, created_at)
         logger.info("PyPDF 解析完成: %s chunks=%s", file_path.name, len(chunks))
         return chunks
 
@@ -153,7 +153,7 @@ class MinerUDocumentService:
 
     # ═══ PyPDF (兜底) ═══
 
-    def _parse_with_pypdf(self, file_path: Path) -> List[DocumentChunk]:
+    def _parse_with_pypdf(self, file_path: Path, library: str = "", created_at: str = "") -> List[DocumentChunk]:
         loader = PyPDFLoader(str(file_path))
         raw_docs = loader.load()
         splitter = RecursiveCharacterTextSplitter(
@@ -176,6 +176,8 @@ class MinerUDocumentService:
                 document_name=file_path.name,
                 page=int(doc.metadata.get("page", 0)) + 1,
                 chunk_index=idx,
+                library=library,
+                created_at=created_at,
                 metadata={
                     "source": doc.metadata.get("source", ""),
                     "total_pages": len(raw_docs),
@@ -186,7 +188,7 @@ class MinerUDocumentService:
 
     # ═══ Markdown 分块（v3.3: 语义分块前置化）═══
 
-    def _split_markdown(self, markdown: str, document_name: str) -> List[DocumentChunk]:
+    def _split_markdown(self, markdown: str, document_name: str, library: str = "", created_at: str = "") -> List[DocumentChunk]:
         """v3.3: 语义分块前置化。
 
         流程: Markdown → 按标题层级分节 → 每节按句子拆分 → Embedding 找语义边界
@@ -229,6 +231,7 @@ class MinerUDocumentService:
                     h1=section.get("h1", ""),
                     h2=section.get("h2", ""),
                     h3=section.get("h3", ""),
+                    library=library, created_at=created_at,
                 )
                 chunks.extend(sub_chunks)
             else:
@@ -237,6 +240,7 @@ class MinerUDocumentService:
                     page=section.get("page", 0), chunk_index=idx,
                     h1=section.get("h1", ""), h2=section.get("h2", ""),
                     h3=section.get("h3", ""),
+                    library=library, created_at=created_at,
                 ))
 
         return chunks
@@ -323,6 +327,7 @@ class MinerUDocumentService:
     def _split_long_section(
         self, content: str, document_name: str,
         base_page: int, h1: str, h2: str, h3: str,
+        library: str = "", created_at: str = "",
     ) -> List[DocumentChunk]:
         """对超过 MAX_CHUNK_CHARS 的 section 按自然段落二次切分。"""
         max_chars = settings.MAX_CHUNK_CHARS
@@ -341,6 +346,7 @@ class MinerUDocumentService:
                     document_name=document_name, page=base_page,
                     chunk_index=len(sub_chunks),
                     h1=h1, h2=h2, h3=h3,
+                    library=library, created_at=created_at,
                 ))
                 current_buf = [sent]
                 current_len = sent_len
@@ -354,6 +360,7 @@ class MinerUDocumentService:
                 document_name=document_name, page=base_page,
                 chunk_index=len(sub_chunks),
                 h1=h1, h2=h2, h3=h3,
+                library=library, created_at=created_at,
             ))
 
         logger.info("长 section 二次切分: %d chars → %d sub-chunks", len(content), len(sub_chunks))
@@ -363,6 +370,7 @@ class MinerUDocumentService:
         self, content: str, document_name: str,
         page: int, chunk_index: int,
         h1: str = "", h2: str = "", h3: str = "",
+        library: str = "", created_at: str = "",
     ) -> DocumentChunk:
         breadcrumb = self._build_breadcrumb({"h1": h1, "h2": h2, "h3": h3})
         return DocumentChunk(
@@ -372,6 +380,8 @@ class MinerUDocumentService:
             content=content,
             document_name=document_name, page=page,
             chunk_index=chunk_index,
+            library=library,
+            created_at=created_at,
             metadata={
                 "parser": "mineru",
                 "h1": h1, "h2": h2, "h3": h3,

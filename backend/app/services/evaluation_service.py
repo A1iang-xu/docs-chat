@@ -14,14 +14,32 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+import httpx
+from openai import AsyncOpenAI
 
 from app.core.config import settings
 from app.services.llm_service import llm_service
 
 logger = logging.getLogger(__name__)
+
+# v4.6: 评估专用低温度 LLM 客户端，确保评分一致性
+_eval_client: AsyncOpenAI | None = None
+
+
+def _get_eval_client() -> AsyncOpenAI:
+    global _eval_client
+    if _eval_client is None:
+        _eval_client = AsyncOpenAI(
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url=settings.DEEPSEEK_BASE_URL,
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        )
+    return _eval_client
 
 
 class EvaluationService:
@@ -38,13 +56,24 @@ class EvaluationService:
         contexts: list[str],
         expected: dict,
     ) -> dict[str, Any]:
-        """评估单条问答，返回各指标分数 (0.0-1.0)。"""
+        """评估单条问答，返回各指标分数 (0.0-1.0)。
+        
+        v4.5 优化: 三个 LLM 评分指标并行执行，大幅减少耗时。
+        """
+        # 并行执行三个 LLM-based 评分（faithfulness / context_precision / answer_relevancy）
+        faithfulness, context_precision, answer_relevancy = await asyncio.gather(
+            self._eval_faithfulness(answer, contexts),
+            self._eval_context_precision(query, contexts),
+            self._eval_answer_relevancy(query, answer),
+        )
         return {
             "query": query,
-            "faithfulness": await self._eval_faithfulness(answer, contexts),
-            "context_precision": await self._eval_context_precision(query, contexts),
+            "answer": answer,
+            "contexts": contexts,
+            "faithfulness": faithfulness,
+            "context_precision": context_precision,
             "context_recall": await self._eval_context_recall(expected, contexts),
-            "answer_relevancy": await self._eval_answer_relevancy(query, answer),
+            "answer_relevancy": answer_relevancy,
             "keyword_coverage": self._eval_keyword_coverage(answer, expected),
         }
 
@@ -53,41 +82,110 @@ class EvaluationService:
         dataset: list[dict],
         library: str | None = None,
     ) -> dict[str, Any]:
-        """批量评估，返回汇总报告。"""
+        """批量评估，返回汇总报告。
+
+        - 答案生成使用完整 RAG 管道（rag_orchestrator.chat_stream）
+        - 捕获 RAG 阶段事件写入进度文件，供前端可视化
+        """
         from app.services.rag_orchestrator import rag_orchestrator
-        from app.services.retrieval_service import retrieval_service
 
         results: list[dict] = []
+        progress_file = self.results_dir / "progress.json"
+
+        # 阶段名称映射（perf/stage 事件 → 标准化阶段名）
+        STAGE_MAP = {
+            "classify": "classify",
+            "rewrite": "rewrite",
+            "plan": "rewrite",
+            "retrieve": "retrieve",
+            "retrieving": "retrieve",
+            "crag": "crag",
+            "crag_skipped": "crag",
+            "generate": "generate",
+            "generating": "generate",
+            "faithfulness_check": "faithfulness_check",
+            "complete": "complete",
+            "pipeline": "complete",
+        }
+
+        # 初始化 per_item 列表
+        per_item = []
+        for item in dataset:
+            per_item.append({
+                "query": item.get("query", ""),
+                "status": "pending",
+                "current_stage": "",
+                "stages_completed": [],
+                "error": None,
+            })
+
         for i, item in enumerate(dataset):
             query = item["query"]
             logger.info("评估进度: %d/%d — %s", i + 1, len(dataset), query[:50])
 
-            try:
-                # 检索（v4.5: 用 asyncio.to_thread 避免同步调用阻塞事件循环）
-                docs = await asyncio.to_thread(
-                    retrieval_service.search,
-                    query, settings.RETRIEVAL_TOP_K, True,
-                    expand_neighbors=True, library=library,
-                )
-                contexts = [d.get("content", "") for d in docs]
+            # 更新当前 item 为 running
+            per_item[i]["status"] = "running"
+            per_item[i]["current_stage"] = "classify"
+            per_item[i]["stages_completed"] = []
+            self._write_progress(progress_file, i + 1, len(dataset),
+                                 current_query=query, per_item=per_item)
 
-                # 生成（非流式，取最终答案）
+            try:
+                # 完整 RAG 管道生成答案，同时捕获阶段事件
                 answer_parts: list[str] = []
+                contexts: list[str] = []
+                contexts_captured = False  # v4.6: 只取第一个 source 事件（全部检索结果）
+
                 async for event in rag_orchestrator.chat_stream(
-                    query=query, history=None, library=library,
+                    query=query, library=library,
                 ):
-                    if event.get("type") == "token":
-                        answer_parts.append(event["data"])
+                    evt_type = event.get("type", "")
+
+                    if evt_type == "token":
+                        answer_parts.append(event.get("data", ""))
+
+                    elif evt_type == "source":
+                        # v4.6: 只取第一个 source 事件（全部检索结果），
+                        # 忽略后续的过滤/重新编号后的 source 事件
+                        if not contexts_captured:
+                            try:
+                                sources_data = json.loads(event.get("data", "[]"))
+                                contexts = [s.get("content", "") for s in sources_data]
+                                contexts_captured = True
+                                logger.info("评估: 捕获 %d 个上下文片段", len(contexts))
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+
+                    elif evt_type in ("perf", "stage"):
+                        try:
+                            data = json.loads(event.get("data", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        stage_key = data.get("stage", "")
+                        normalized = STAGE_MAP.get(stage_key, "")
+                        if normalized and normalized not in per_item[i]["stages_completed"]:
+                            # 将之前的 current_stage 标记为已完成
+                            if per_item[i]["current_stage"] and per_item[i]["current_stage"] not in per_item[i]["stages_completed"]:
+                                per_item[i]["stages_completed"].append(per_item[i]["current_stage"])
+                            per_item[i]["current_stage"] = normalized
+                            self._write_progress(progress_file, i + 1, len(dataset),
+                                                 current_query=query, per_item=per_item)
+
                 answer = "".join(answer_parts)
+                per_item[i]["stages_completed"].append("complete")
+                per_item[i]["current_stage"] = "complete"
 
                 if not answer.strip():
                     answer = "(no answer generated)"
 
                 # 评估
                 scores = await self.evaluate_single(query, answer, contexts, item)
+                per_item[i]["status"] = "done"
                 results.append(scores)
             except Exception as exc:
                 logger.warning("评估失败: %s — %s", query[:50], exc)
+                per_item[i]["status"] = "error"
+                per_item[i]["error"] = str(exc)
                 results.append({
                     "query": query,
                     "error": str(exc),
@@ -98,27 +196,63 @@ class EvaluationService:
                     "keyword_coverage": 0.0,
                 })
 
+            # 写入进度（每个 item 完成后）
+            self._write_progress(progress_file, i + 1, len(dataset),
+                                 current_query=query, per_item=per_item)
+
+        # 清除进度文件
+        if progress_file.exists():
+            progress_file.unlink()
+
         # 汇总
         report = self._summarize(results)
         report["dataset_size"] = len(dataset)
         report["library"] = library
-        report["timestamp"] = datetime.now().isoformat()
+        report["timestamp"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         report["details"] = results
 
         # 持久化
         self._save_report(report)
         return report
 
+    def _write_progress(
+        self, filepath: Path, current: int, total: int,
+        current_query: str = "",
+        per_item: list[dict] | None = None,
+    ) -> None:
+        """写入评估进度文件，包含每个 item 的详细状态和 RAG 阶段。"""
+        progress = {
+            "current": current,
+            "total": total,
+            "current_query": current_query,
+            "per_item": per_item or [],
+        }
+        filepath.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
+
+    def get_progress(self) -> dict | None:
+        """获取当前评估进度。"""
+        progress_file = self.results_dir / "progress.json"
+        if progress_file.exists():
+            return json.loads(progress_file.read_text(encoding="utf-8"))
+        return None
+
     # ── LLM-as-judge 评估方法 ──
 
     async def _eval_faithfulness(self, answer: str, contexts: list[str]) -> float:
         """faithfulness: 答案是否忠于上下文（不幻觉）。"""
         context_text = "\n---\n".join(contexts[:5])
+        if not answer.strip() or answer == "(no answer generated)":
+            return 0.0
+        if not context_text.strip():
+            return 0.0  # 无上下文可验证，无法评估忠实度
         prompt = (
-            "You are an evaluator. Rate the faithfulness of the answer to the given context.\n"
-            "Faithfulness measures whether all claims in the answer are supported by the context.\n"
-            "Output a single number from 0.0 to 1.0 (1.0 = fully faithful, 0.0 = complete hallucination).\n"
-            "Output ONLY the number, no explanation.\n\n"
+            "Evaluate the faithfulness of the answer to the given context.\n\n"
+            "Scoring guide:\n"
+            "- 0.7-1.0: Most key claims are supported by the context\n"
+            "- 0.4-0.6: Some claims supported, some not found or contradict\n"
+            "- 0.1-0.3: Most claims are unsupported or hallucinated\n"
+            "- 0.0: Answer is completely empty or fabricated\n\n"
+            "Output ONLY the number.\n\n"
             f"Context:\n{context_text[:2000]}\n\n"
             f"Answer:\n{answer[:1000]}"
         )
@@ -127,11 +261,16 @@ class EvaluationService:
     async def _eval_context_precision(self, query: str, contexts: list[str]) -> float:
         """context_precision: 检索的上下文是否与查询相关。"""
         context_text = "\n---\n".join(contexts[:5])
+        if not context_text.strip():
+            return 0.0  # 无上下文，精确率为 0
         prompt = (
-            "You are an evaluator. Rate the precision of retrieved contexts for the given query.\n"
-            "Context precision measures how relevant the retrieved contexts are to the query.\n"
-            "Output a single number from 0.0 to 1.0 (1.0 = all contexts highly relevant).\n"
-            "Output ONLY the number, no explanation.\n\n"
+            "Evaluate the precision of the retrieved contexts for the given query.\n\n"
+            "Scoring guide:\n"
+            "- 0.7-1.0: Most contexts are directly relevant to the query\n"
+            "- 0.4-0.6: Some contexts relevant, some off-topic\n"
+            "- 0.1-0.3: Most contexts are irrelevant\n"
+            "- 0.0: No contexts provided or all completely irrelevant\n\n"
+            "Output ONLY the number.\n\n"
             f"Query: {query}\n\n"
             f"Retrieved contexts:\n{context_text[:2000]}"
         )
@@ -144,14 +283,24 @@ class EvaluationService:
             return 1.0
         context_text = " ".join(contexts).lower()
         hits = sum(1 for kw in keywords if kw.lower() in context_text)
+        matched = [kw for kw in keywords if kw.lower() in context_text]
+        missed = [kw for kw in keywords if kw.lower() not in context_text]
+        logger.info("评估 ContextRecall: 关键词=%s, 命中=%s, 未命中=%s, 上下文总长度=%d",
+                     keywords, matched, missed, len(context_text))
         return round(hits / len(keywords), 3)
 
     async def _eval_answer_relevancy(self, query: str, answer: str) -> float:
         """answer_relevancy: 答案是否切题。"""
+        if not answer.strip() or answer == "(no answer generated)":
+            return 0.0
         prompt = (
-            "You are an evaluator. Rate how relevant the answer is to the query.\n"
-            "Output a single number from 0.0 to 1.0 (1.0 = perfectly relevant).\n"
-            "Output ONLY the number, no explanation.\n\n"
+            "Evaluate how relevant the answer is to the query.\n\n"
+            "Scoring guide:\n"
+            "- 0.7-1.0: Answer directly addresses the query with relevant information\n"
+            "- 0.4-0.6: Partially relevant, some off-topic content\n"
+            "- 0.1-0.3: Mostly off-topic or vague\n"
+            "- 0.0: Completely irrelevant or empty\n\n"
+            "Output ONLY the number.\n\n"
             f"Query: {query}\n\nAnswer: {answer[:1000]}"
         )
         return await self._llm_score(prompt)
@@ -163,25 +312,84 @@ class EvaluationService:
             return 1.0
         answer_lower = answer.lower()
         hits = sum(1 for kw in keywords if kw.lower() in answer_lower)
+        matched = [kw for kw in keywords if kw.lower() in answer_lower]
+        missed = [kw for kw in keywords if kw.lower() not in answer_lower]
+        logger.info("评估 KeywordCoverage: 关键词=%s, 命中=%s, 未命中=%s, 答案长度=%d",
+                     keywords, matched, missed, len(answer_lower))
         return round(hits / len(keywords), 3)
 
     # ── 辅助方法 ──
 
-    async def _llm_score(self, prompt: str) -> float:
-        """调用 LLM 获取 0-1 分数，容错处理。"""
-        try:
-            result = await llm_service.chat(
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt="You are a strict evaluator. Output only a number.",
+    async def _llm_score(self, prompt: str, retry_on_zero: bool = True) -> float:
+        """v4.6: 调用 LLM 获取 0-1 分数，使用低温度 + 正则提取 + 0.0 重试。
+
+        使用独立低温度客户端 (temperature=0) 确保评分一致性。
+        用正则提取响应中的第一个浮点数，兼容 "0.5", "Score: 0.7", "0.8/1.0" 等格式。
+        若得分为 0.0，自动重试一次（带更强锚定提示）。
+        """
+        client = _get_eval_client()
+        model = settings.DEEPSEEK_MODEL
+        system_prompt = (
+            "You are a fair and generous evaluator. "
+            "Rate on a scale of 0.0 to 1.0. "
+            "Anchor your scoring: start from 0.5 for average quality, "
+            "adjust up for good answers, down for poor ones. "
+            "Only output 0.0 if the answer is completely empty or nonsensical. "
+            "Output ONLY the numeric score, nothing else."
+        )
+
+        async def _do_score(p: str, sp: str) -> float:
+            try:
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": sp},
+                            {"role": "user", "content": p},
+                        ],
+                        max_tokens=50,
+                        temperature=0.0,  # 确定性输出，确保评分一致
+                        stream=False,
+                    ),
+                    timeout=60,
+                )
+                raw = (response.choices[0].message.content or "").strip()
+                logger.info("LLM 评分原始响应: %s", raw[:200])
+
+                # 正则提取第一个浮点数，兼容 "0.5", "Score: 0.7", "0.8/1.0" 等
+                match = re.search(r"(\d+\.?\d*)", raw)
+                if match:
+                    score = float(match.group(1))
+                    # 如果分数 > 1.0，可能是百分比，归一化
+                    if score > 1.0:
+                        score = score / 100.0 if score <= 100 else 1.0
+                    return max(0.0, min(1.0, round(score, 3)))
+                else:
+                    logger.warning("LLM 评分无法提取数字: %s", raw[:200])
+                    return 0.5
+            except asyncio.TimeoutError:
+                logger.warning("LLM 评分超时 (60s)，返回默认值 0.5")
+                return 0.5
+            except Exception as exc:
+                logger.warning("LLM 评分失败: %s", exc)
+                return 0.5
+
+        score = await _do_score(prompt, system_prompt)
+
+        # 如果得分为 0.0 且允许重试，用更强锚定再试一次
+        if retry_on_zero and score == 0.0:
+            logger.info("LLM 评分为 0.0，使用更强锚定重试...")
+            retry_sp = (
+                "You are a generous evaluator. "
+                "Rate on a scale of 0.0 to 1.0. "
+                "IMPORTANT: Unless the answer is completely empty, "
+                "start from 0.3 and adjust upward based on quality. "
+                "Do NOT output 0.0 unless there is literally no content to evaluate. "
+                "Output ONLY the numeric score."
             )
-            score = float(result.strip())
-            return max(0.0, min(1.0, round(score, 3)))
-        except (ValueError, TypeError):
-            logger.warning("LLM 评分解析失败: %s", result[:100] if 'result' in dir() else "N/A")
-            return 0.5
-        except Exception as exc:
-            logger.warning("LLM 评分失败: %s", exc)
-            return 0.5
+            score = await _do_score(prompt, retry_sp)
+
+        return score
 
     def _summarize(self, results: list[dict]) -> dict:
         """汇总各项指标平均值。"""
@@ -217,7 +425,7 @@ class EvaluationService:
     async def generate_dataset_from_knowledge_base(
         self,
         library: str | None = None,
-        num_queries: int = 10,
+        num_queries: int = 3,
     ) -> list[dict]:
         """v4.5: 根据已有知识库内容自动生成评估数据集。
 

@@ -86,7 +86,11 @@ class IngestionService:
             try:
                 from app.services.mineru_document_service import mineru_document_service
 
-                chunks = await mineru_document_service.load_and_split(state.file_path)
+                chunks = await mineru_document_service.load_and_split(
+                    state.file_path,
+                    library=state.library or "default",
+                    created_at=state.created_at.isoformat(),
+                )
                 if not chunks:
                     raise ValueError("文档解析完成，但未生成可入库的有效分块")
 

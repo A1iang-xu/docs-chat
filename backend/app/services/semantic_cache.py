@@ -60,11 +60,24 @@ class SemanticCache:
     @property
     def collection(self):
         if self._collection is None:
-            self._collection = self.client.get_or_create_collection(
-                name=self.COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-                embedding_function=vector_store.embedding_function,
-            )
+            try:
+                self._collection = self.client.get_or_create_collection(
+                    name=self.COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"},
+                    embedding_function=vector_store.embedding_function,
+                )
+            except Exception as exc:
+                logger.warning("语义缓存集合创建失败: %s，尝试重建", exc)
+                # 如果集合已损坏，删除并重建
+                try:
+                    self.client.delete_collection(self.COLLECTION_NAME)
+                except Exception:
+                    pass
+                self._collection = self.client.create_collection(
+                    name=self.COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"},
+                    embedding_function=vector_store.embedding_function,
+                )
         return self._collection
 
     async def warmup(self) -> int:
@@ -261,12 +274,21 @@ class SemanticCache:
         self._faiss_index = None
         self._warmed_up = False
         try:
-            if self.collection.count() > 0:
-                self.collection.delete(where={})
-                count = max(count, 1)
-            logger.info("语义缓存已清空")
+            if self._collection is not None:
+                chroma_count = self._collection.count()
+                if chroma_count > 0:
+                    # 获取所有文档 ID 并逐个删除（ChromaDB 不支持 where={} 全量删除）
+                    ids_to_delete = self._collection.get(limit=chroma_count).get("ids", [])
+                    if ids_to_delete:
+                        self._collection.delete(ids=ids_to_delete)
+                        count = max(count, len(ids_to_delete))
+                # 重置 collection 引用，下次访问时重新创建
+                self._collection = None
+            logger.info("语义缓存已清空 (%d 条)", count)
         except Exception as exc:
             logger.warning("语义缓存清空失败: %s", exc)
+            # 即使 ChromaDB 操作失败，也要重置引用
+            self._collection = None
         return count
 
     def _store_sync(self, query: str, answer: str, sources: list[dict]) -> None:

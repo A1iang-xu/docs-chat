@@ -1,4 +1,4 @@
-"""文档 API —— 上传、异步解析任务、文档状态。"""
+"""文档 API —— 上传、URL 抓取、异步解析任务、文档状态。"""
 from __future__ import annotations
 
 import logging
@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from app.models.schemas import DocumentJob
 from app.services.ingestion_service import ingestion_service
@@ -20,6 +21,13 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 _ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".html", ".json"}
+
+
+class FetchUrlRequest(BaseModel):
+    """v4.5: URL 抓取入库请求"""
+    filename: str = Field(..., min_length=1)
+    library: str = Field(..., min_length=1)
+    url: str = Field(..., min_length=1)
 
 
 @router.post("/upload", response_model=DocumentJob)
@@ -61,9 +69,42 @@ async def upload_document(
     return job
 
 
+@router.post("/fetch", response_model=DocumentJob)
+async def fetch_url(request: FetchUrlRequest):
+    """v4.5: 提交文档 URL，异步抓取入库。"""
+    from app.services.web_ingestion_service import web_ingestion_service
+
+    job_id = await web_ingestion_service.ingest_url(
+        url=request.url,
+        library_slug=request.library,
+        version="latest",
+    )
+    job = web_ingestion_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=500, detail="任务创建失败")
+    logger.info("URL 抓取任务已创建: %s library=%s url=%s", job_id, request.library, request.url)
+    return job
+
+
+@router.delete("/{doc_id}")
+async def delete_document(doc_id: str):
+    """v4.5: 删除指定文档及其所有 chunks。"""
+    from app.services.vector_store import vector_store
+
+    deleted = vector_store.delete_document(doc_id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=f"文档 '{doc_id}' 不存在或已为空")
+    logger.info("文档 '%s' 已删除，移除 %d 个 chunks", doc_id, deleted)
+    return {"status": "deleted", "document": doc_id, "chunks_removed": deleted}
+
+
 @router.get("/jobs/{job_id}", response_model=DocumentJob)
 async def get_job(job_id: str):
+    """查询异步任务状态（支持上传任务和 URL 抓取任务）。"""
     job = ingestion_service.get_job(job_id)
+    if job is None:
+        from app.services.web_ingestion_service import web_ingestion_service
+        job = web_ingestion_service.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return job

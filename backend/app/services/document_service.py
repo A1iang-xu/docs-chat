@@ -38,6 +38,7 @@ class DocumentChunk:
         heading_path: str = "",
         code_language: str = "",
         is_code_block: bool = False,
+        created_at: str = "",  # v4.5: 入库时间
     ):
         self.chunk_id = chunk_id
         self.content = content
@@ -51,6 +52,7 @@ class DocumentChunk:
         self.heading_path = heading_path
         self.code_language = code_language
         self.is_code_block = is_code_block
+        self.created_at = created_at
 
     def to_dict(self) -> dict:
         return {

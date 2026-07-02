@@ -60,3 +60,58 @@ async def list_libraries():
     from app.services.vector_store import vector_store
 
     return await asyncio.to_thread(vector_store.get_libraries)
+
+
+@router.post("/")
+async def create_library(request: dict):
+    """v4.5: 创建文档库（空库，不包含文档）。"""
+    import asyncio
+    library_name = request.get("library", "").strip()
+    if not library_name:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="知识库名称不能为空")
+    from app.services.vector_store import vector_store
+    try:
+        existing = await asyncio.to_thread(vector_store.get_libraries)
+        if any(lib.library == library_name for lib in existing):
+            return {"status": "exists", "library": library_name, "message": "知识库已存在"}
+    except Exception:
+        pass
+    # 持久化注册空库
+    vector_store.register_library(library_name)
+    return {"status": "created", "library": library_name, "message": "知识库已就绪，请通过文档入库添加文档"}
+
+
+@router.delete("/{library}")
+async def delete_library(library: str):
+    """v4.5: 删除指定文档库及其所有 chunks。"""
+    if library == "default":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="不能删除默认文档库，请使用 /documents/clear 清空全部数据")
+    from app.services.vector_store import vector_store
+    deleted = vector_store.delete_library(library)
+    if deleted == 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"文档库 '{library}' 不存在或已为空")
+    # -1 表示仅删除了注册表空库记录
+    if deleted == -1:
+        deleted = 0
+    # 清除 BM25 索引
+    try:
+        from app.services.retrieval_service import retrieval_service
+        if library in retrieval_service.bm25_indexes:
+            del retrieval_service.bm25_indexes[library]
+    except Exception:
+        pass
+    # 清除缓存
+    try:
+        from app.services.semantic_cache import semantic_cache
+        await semantic_cache.clear()
+    except Exception:
+        pass
+    try:
+        from app.services.cache_service import cache_service
+        cache_service.invalidate()
+    except Exception:
+        pass
+    return {"status": "deleted", "library": library, "chunks_removed": deleted}

@@ -1,5 +1,5 @@
 """Pydantic 数据模型 —— 定义 API 请求/响应、对话、文档等核心数据结构"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Literal, Optional
 from datetime import datetime
 from uuid import uuid4
@@ -108,6 +108,11 @@ class IngestUrlRequest(BaseModel):
     url: str
     library_slug: str = Field(..., pattern=r"^[a-z0-9-]+$")
     version: str = "latest"
+
+    @field_validator("library_slug", mode="before")
+    @classmethod
+    def normalize_slug(cls, v: str) -> str:
+        return v.lower().strip()
 
 
 class LibraryInfo(BaseModel):

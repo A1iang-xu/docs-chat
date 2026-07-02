@@ -42,8 +42,12 @@ const evalResult = ref<EvaluationResult | null>(null)
 const evalHistory = ref<EvaluationResult[]>([])
 const error = ref('')
 const loading = ref(false)
+const clearingHistory = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let hasSeenProgress = false
+let pollAttempts = 0
+const MAX_POLL_ATTEMPTS = 200  // 最多轮询 200 次 (200 × 3s = 10 分钟)
 
 // ═══════════════════════════════════════════
 // 计算属性
@@ -96,6 +100,8 @@ async function runEvaluation() {
   error.value = ''
   evalProgress.value = null
   evalResult.value = null
+  hasSeenProgress = false
+  pollAttempts = 0
   try {
     const res = await api.post('/evaluation/run', {}, { timeout: 300_000 })
     if (res.data.status === 'running') {
@@ -122,35 +128,60 @@ function stopPolling() {
 }
 
 async function pollProgress() {
+  pollAttempts++
+  if (pollAttempts > MAX_POLL_ATTEMPTS) {
+    stopPolling()
+    isRunning.value = false
+    error.value = '评估超时，请稍后查看历史记录'
+    return
+  }
+
   try {
     const progressRes = await api.get('/evaluation/progress')
     if (progressRes.data && progressRes.data.status !== 'idle') {
+      // 有进度数据，更新 UI
       evalProgress.value = progressRes.data
-    } else {
-      evalProgress.value = null
+      hasSeenProgress = true
+      return
     }
   } catch {
     // 静默
   }
 
-  try {
-    const res = await api.get('/evaluation/latest')
-    if (res.data && res.data.status !== 'empty') {
-      if (
-        res.data.avg_faithfulness !== undefined ||
-        res.data.faithfulness !== undefined
-      ) {
-        evalResult.value = res.data
-        evalProgress.value = null
-        isRunning.value = false
-        stopPolling()
-        fetchHistory()
-        return
-      }
+  // 进度为 idle：如果之前看到过进度 → 评估刚完成，获取结果
+  if (hasSeenProgress) {
+    stopPolling()
+    // 保留进度栏 2 秒让用户看到完成状态
+    if (evalProgress.value) {
+      // 标记所有 item 为完成
+      const completedItems = (evalProgress.value.per_item || []).map(item => ({
+        ...item,
+        status: 'done',
+        current_stage: 'complete',
+      }))
+      evalProgress.value = { ...evalProgress.value, per_item: completedItems }
     }
-  } catch {
-    // 继续轮询
+    setTimeout(async () => {
+      evalProgress.value = null
+      isRunning.value = false
+      try {
+        const res = await api.get('/evaluation/latest')
+        if (res.data && res.data.status !== 'empty') {
+          if (
+            res.data.avg_faithfulness !== undefined ||
+            res.data.faithfulness !== undefined
+          ) {
+            evalResult.value = res.data
+            fetchHistory()
+          }
+        }
+      } catch {
+        // 静默
+      }
+    }, 2000)
+    return
   }
+  // 还没看到进度 → 继续等待（后台任务可能还未启动）
 }
 
 async function fetchLatest() {
@@ -176,6 +207,19 @@ async function fetchHistory() {
     evalHistory.value = list
   } catch {
     // 静默
+  }
+}
+
+async function clearHistory() {
+  clearingHistory.value = true
+  try {
+    await api.delete('/evaluation/history')
+    evalHistory.value = []
+    evalResult.value = null
+  } catch (e: any) {
+    error.value = e.response?.data?.detail || e.message || '清空历史失败'
+  } finally {
+    clearingHistory.value = false
   }
 }
 
@@ -429,7 +473,15 @@ onUnmounted(() => {
 
     <!-- Evaluation History -->
     <section v-if="evalHistory.length > 0" class="card">
-      <div class="card-title">评估历史</div>
+      <div class="card-title">
+        评估历史
+        <button
+          class="btn btn-ghost btn-sm"
+          :disabled="clearingHistory"
+          @click="clearHistory"
+          style="margin-left: auto;"
+        >{{ clearingHistory ? '清空中...' : '清空历史' }}</button>
+      </div>
       <table class="history-table">
         <thead>
           <tr>
@@ -438,6 +490,7 @@ onUnmounted(() => {
             <th>P</th>
             <th>R</th>
             <th>A</th>
+            <th>K</th>
             <th>条数</th>
           </tr>
         </thead>
@@ -448,6 +501,7 @@ onUnmounted(() => {
             <td>{{ formatScore(getScore(item, 'context_precision')) }}</td>
             <td>{{ formatScore(getScore(item, 'context_recall')) }}</td>
             <td>{{ formatScore(getScore(item, 'answer_relevancy')) }}</td>
+            <td>{{ formatScore(getScore(item, 'keyword_coverage')) }}</td>
             <td>{{ (item.total_evaluated ?? item.dataset_size ?? '?') }}条</td>
           </tr>
         </tbody>

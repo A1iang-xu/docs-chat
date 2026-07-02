@@ -143,9 +143,9 @@ class RAGOrchestrator:
             )
 
             hyde_task = None
-            # v3.3: 事实查询和概念查询跳过 HyDE
-            skip_hyde = query_type in ("fact_lookup", "concept_explain")
-            if settings.HYDE_ENABLED and not skip_hyde:
+            # v4.6: 对所有查询启用 HyDE——向量模型 all-MiniLM-L6-v2 不支持中文，
+            # 中文查英文文档得分极低（<0.22），HyDE 生成假设性英文文档后检索分可达 0.6+
+            if settings.HYDE_ENABLED:
                 from app.services.hyde_service import hyde_service
                 if settings.HYDE_PARALLEL:
                     hyde_task = asyncio.create_task(hyde_service.generate(query))
@@ -237,7 +237,6 @@ class RAGOrchestrator:
 
         sources = self._build_sources(ordered_docs)
         sources_payload = [source.model_dump() for source in sources]
-        yield {"type": "source", "data": json.dumps(sources_payload, ensure_ascii=False)}
 
         # ── v3.3: 多轮对话摘要压缩 ──
         compressed_history = await self._summarize_history(history)
@@ -248,10 +247,36 @@ class RAGOrchestrator:
         yield {"type": "stage", "data": json.dumps({"stage": "generating", "label": "正在生成回答..."})}
         messages = self._build_messages(query=query, docs=ordered_docs, history=compressed_history)
         answer_parts: list[str] = []
+        # v4.5: 前缀缓冲 —— 收集前 150 字符检测并剥离冗余前缀（如"根据参考文档，"）
+        _prefix_buffer: list[str] = []
+        _prefix_sent = False
         async with self._llm_sem:
             async for token in llm_service.chat_stream(messages=messages, system_prompt=self.SYSTEM_PROMPT):
                 answer_parts.append(token)
-                yield {"type": "token", "data": token}
+                if _prefix_sent:
+                    yield {"type": "token", "data": token}
+                    continue
+                _prefix_buffer.append(token)
+                buffered = "".join(_prefix_buffer)
+                if len(buffered) >= 150 or "\n" in buffered or buffered.rstrip().endswith((".", "。", "!", "！", "?", "？")):
+                    _prefix_sent = True
+                    cleaned = self._strip_prefix(buffered)
+                    if cleaned and cleaned != buffered:
+                        # 前缀已剥离，调整 answer_parts
+                        prefix_len = len(buffered) - len(cleaned)
+                        # 从 answer_parts 中移除前缀对应的 token
+                        accumulated = ""
+                        cut = 0
+                        for j, t in enumerate(answer_parts):
+                            accumulated += t
+                            cut += 1
+                            if len(accumulated) >= prefix_len:
+                                break
+                        answer_parts = [cleaned] + answer_parts[cut:]
+                        yield {"type": "token", "data": cleaned}
+                    else:
+                        for t in _prefix_buffer:
+                            yield {"type": "token", "data": t}
         answer = "".join(answer_parts)
         yield self._perf("generate", t_gen)
 
@@ -279,6 +304,35 @@ class RAGOrchestrator:
             )
             for evt in ff_events:
                 yield evt
+
+        # v4.5: 过滤未引用的来源，并重新编号为 1, 2, ...
+        cited_indices = set()
+        if answer:
+            import re
+            cited_indices = {int(m) for m in re.findall(r"\[(\d+)\]", answer)}
+        if cited_indices:
+            # 构建旧编号 → 新编号映射（按原始顺序排序后从 1 开始）
+            sorted_cited = sorted(cited_indices)
+            renumber_map = {old: new for new, old in enumerate(sorted_cited, start=1)}
+
+            # 过滤 + 重新编号 sources
+            sources_payload = [s for s in sources_payload if s.get("index") in cited_indices]
+            for s in sources_payload:
+                s["index"] = renumber_map[s["index"]]
+            ordered_docs = [d for i, d in enumerate(ordered_docs) if (i + 1) in cited_indices]
+
+            # 重新编号回答中的引用
+            def _renumber_citation(match):
+                old = int(match.group(1))
+                return f"[{renumber_map.get(old, old)}]"
+            renumbered_answer = re.sub(r"\[(\d+)\]", _renumber_citation, answer)
+            if renumbered_answer != answer:
+                answer = renumbered_answer
+                # 发送替换事件，让前端用重新编号后的回答替换当前内容
+                yield {"type": "replace", "data": renumbered_answer}
+
+            # 补发过滤+重新编号后的来源列表
+            yield {"type": "source", "data": json.dumps(sources_payload, ensure_ascii=False)}
 
         await semantic_cache.store(query=query, answer=answer, sources=sources_payload)
 
@@ -538,6 +592,23 @@ class RAGOrchestrator:
             )
             for index, doc in enumerate(docs)
         ]
+
+    @staticmethod
+    def _strip_prefix(text: str) -> str:
+        """v4.5: 剥离 LLM 回答中的冗余前缀（如 '根据参考文档，'）。"""
+        import re
+        patterns = [
+            r"^根据(?:提供的)?(?:参考)?文档[内容]*[，,。：:\s]*",
+            r"^根据(?:上述)?文档[，,。：:\s]*",
+            r"^根据已有文档[，,。：:\s]*",
+            r"^根据(?:以上)?参考文档[，,。：:\s]*",
+            r"^基于(?:提供的)?文档[，,。：:\s]*",
+            r"^Based on (?:the )?(?:provided |reference )?documents?[，,。:\s]*",
+            r"^According to (?:the )?documents?[，,。:\s]*",
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        return text
 
     def _build_messages(
         self,

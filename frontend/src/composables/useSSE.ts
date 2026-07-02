@@ -1,9 +1,9 @@
 /**
  * useSSE — 管理 SSE 流式连接的 Composable
- * 支持断线重连、心跳检测、AbortController 中断
+ * 支持断线重连、心跳检测
  *
- * v4.5: connect() 中先 cancel 前一个 reader 再发起新请求，
- * 彻底消除浏览器 ERR_ABORTED（根因：旧 reader 持有 HTTP 连接导致新 fetch 冲突）。
+ * v4.6: 彻底移除 abortController.abort() 调用——这是浏览器
+ * net::ERR_ABORTED 的唯一触发源。旧请求通过 requestToken 检测自然退出。
  */
 import { ref, onUnmounted } from 'vue'
 import type { SourceCitation, SSEEvent } from '@/types'
@@ -26,13 +26,9 @@ export function useSSE(options: SSEOptions = {}) {
   const stageLabel = ref<string>('')
   const faithfulnessWarning = ref<string | null>(null)
 
-  let abortController: AbortController | null = null
   let retryCount = 0
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
-
-  // v4.5: 请求令牌 + 活跃 reader 引用
   let requestToken = 0
-  let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
   function resetHeartbeat() {
     if (heartbeatTimer) clearTimeout(heartbeatTimer)
@@ -50,28 +46,13 @@ export function useSSE(options: SSEOptions = {}) {
 
   function abort(reason?: string) {
     requestToken++
-    // v4.5: 先 cancel reader 再 abort controller，确保 HTTP 连接正确关闭
-    if (activeReader) {
-      try { activeReader.cancel() } catch { /* already cancelled */ }
-      activeReader = null
-    }
-    abortController?.abort()
-    abortController = null
     isStreaming.value = false
     clearHeartbeat()
     if (reason) error.value = reason
   }
 
   async function connect(url: string, body: Record<string, unknown>) {
-    // v4.5: 关键修复 —— 先正确关闭前一个 reader 的 HTTP 连接，再发起新请求
-    // 这才是 ERR_ABORTED 的根因：旧 reader 持有连接，新 fetch 与之冲突
     requestToken++
-    if (activeReader) {
-      try { await activeReader.cancel() } catch { /* ignore */ }
-      activeReader = null
-    }
-    abortController?.abort()
-    abortController = null
     clearHeartbeat()
 
     content.value = ''
@@ -88,8 +69,6 @@ export function useSSE(options: SSEOptions = {}) {
 
   async function doConnect(url: string, body: Record<string, unknown>) {
     const myToken = requestToken
-    const myController = new AbortController()
-    abortController = myController
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 
@@ -104,7 +83,6 @@ export function useSSE(options: SSEOptions = {}) {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: myController.signal,
       })
 
       if (!response.ok) {
@@ -113,7 +91,6 @@ export function useSSE(options: SSEOptions = {}) {
 
       reader = response.body?.getReader() ?? null
       if (!reader) throw new Error('无法获取响应流')
-      activeReader = reader  // v4.5: 全局引用，供 connect() cancel
 
       const decoder = new TextDecoder()
       let buffer = ''
@@ -123,7 +100,6 @@ export function useSSE(options: SSEOptions = {}) {
         const { done, value } = await reader.read()
         if (done) break
 
-        // v4.5: 检查令牌 —— 新请求已发起，退出（reader 已被 connect() cancel）
         if (myToken !== requestToken) {
           return
         }
@@ -149,7 +125,6 @@ export function useSSE(options: SSEOptions = {}) {
                   content.value += event.data
                   break
                 case 'replace':
-                  // v4.5: 后端重新编号/后处理后的完整回答，替换当前内容
                   content.value = event.data
                   break
                 case 'source':
@@ -161,7 +136,6 @@ export function useSSE(options: SSEOptions = {}) {
                     stage.value = ''
                     stageLabel.value = ''
                     clearHeartbeat()
-                    abortController = null
                   }
                   doneReceived = true
                   break
@@ -170,7 +144,6 @@ export function useSSE(options: SSEOptions = {}) {
                     error.value = event.data
                     isStreaming.value = false
                     clearHeartbeat()
-                    abortController = null
                   }
                   doneReceived = true
                   break
@@ -204,14 +177,11 @@ export function useSSE(options: SSEOptions = {}) {
         }
       }
 
-      // 流自然结束
       if (myToken === requestToken) {
         isStreaming.value = false
         clearHeartbeat()
-        abortController = null
       }
     } catch (e: unknown) {
-      if ((e as Error).name === 'AbortError') return
       if (myToken !== requestToken) return
 
       if (retryCount < maxRetries) {
@@ -228,22 +198,17 @@ export function useSSE(options: SSEOptions = {}) {
       error.value = (e as Error).message
       isStreaming.value = false
       clearHeartbeat()
-      abortController = null
     } finally {
-      // v4.5: 释放 reader 锁，清除全局引用
       if (reader) {
         try { reader.releaseLock() } catch { /* already released */ }
-      }
-      if (activeReader === reader) {
-        activeReader = null
       }
     }
   }
 
   onUnmounted(() => {
-    if (isStreaming.value) {
-      abort()
-    }
+    requestToken++
+    isStreaming.value = false
+    clearHeartbeat()
   })
 
   return { content, sources, isStreaming, error, cacheHit, stage, stageLabel, faithfulnessWarning, connect, abort }
