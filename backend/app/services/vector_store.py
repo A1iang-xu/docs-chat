@@ -153,9 +153,19 @@ class VectorStoreService:
         # 本地 SentenceTransformer
         if provider == "sentence_transformers":
             try:
-                logger.info("local embedding: %s", settings.EMBEDDING_MODEL)
+                model_path = settings.EMBEDDING_MODEL
+                logger.info("local embedding: %s", model_path)
+                
+                # 如果是本地目录，使用自定义加载（绕过 HuggingFace repo 验证）
+                if os.path.isdir(model_path):
+                    logger.info("从本地路径加载模型: %s", model_path)
+                    return M3eEmbeddingFunction(
+                        model_name=model_path,
+                        batch_size=settings.EMBEDDING_BATCH_SIZE,
+                    )
+                
                 return embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=settings.EMBEDDING_MODEL
+                    model_name=model_path
                 )
             except Exception as exc:
                 logger.warning("sentence_transformers failed, fallback default: %s", exc)
