@@ -8,6 +8,7 @@ services:
     volumes:
       - chroma_data:/app/chroma_data
       - uploads:/app/uploads
+      - ./model_cache:/root/.cache/torch/sentence_transformers
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
