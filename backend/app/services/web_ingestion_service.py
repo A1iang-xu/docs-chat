@@ -340,6 +340,7 @@ class WebIngestionService:
         无 crawl4ai 时使用，仅抓取单个 URL（不支持 BFS），
         提取页面正文文本作为 markdown。
         支持 meta refresh 重定向跟随。
+        支持 plain text / markdown 响应（Content-Type 非 HTML 时直接使用原文）。
         """
         import httpx
         import re
@@ -357,7 +358,29 @@ class WebIngestionService:
                 try:
                     resp = await client.get(url)
                     resp.raise_for_status()
-                    soup = BeautifulSoup(resp.text, "html.parser")
+
+                    content_type = resp.headers.get("content-type", "").lower()
+                    raw_text = resp.text
+
+                    # 非 HTML 内容（plain text / markdown）直接使用原文
+                    is_html = "html" in content_type or raw_text.lstrip().lower().startswith(("<!doctype html", "<html"))
+                    if not is_html:
+                        text = raw_text.strip()
+                        if text:
+                            # 从 URL 提取标题
+                            path = urlparse(url).path.strip("/")
+                            title = path.rsplit("/", 1)[-1].rsplit(".", 1)[0] if path else urlparse(url).netloc
+                            pages.append({
+                                "url": url,
+                                "markdown": text,
+                                "title": self._sanitize_title(title, url),
+                            })
+                            logger.info("简单抓取成功(纯文本): %s (%d 字符)", url, len(text))
+                        else:
+                            logger.warning("简单抓取无内容: %s", url)
+                        continue
+
+                    soup = BeautifulSoup(raw_text, "html.parser")
 
                     # 检测 meta refresh 重定向，自动跟随
                     meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
@@ -381,7 +404,11 @@ class WebIngestionService:
                     title = self._sanitize_title(raw_title, url)
 
                     body = soup.body
-                    text = body.get_text(separator="\n", strip=True) if body else ""
+                    if body:
+                        text = body.get_text(separator="\n", strip=True)
+                    else:
+                        # body 标签不存在时，从整个文档提取文本
+                        text = soup.get_text(separator="\n", strip=True)
 
                     # 清理多余空行
                     text = re.sub(r"\n{3,}", "\n\n", text)
