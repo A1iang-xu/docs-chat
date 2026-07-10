@@ -71,6 +71,62 @@ class M3eEmbeddingFunction(EmbeddingFunction):
         return [emb.tolist() for emb in embeddings]
 
 
+class LocalTransformerEmbeddingFunction(EmbeddingFunction):
+    """使用 transformers 库直接从本地路径加载模型。
+
+    绕过 sentence_transformers 的 HuggingFace repo_id 验证，
+    适用于无法联网或模型已下载到本地的场景。
+    实现 mean pooling + L2 归一化（与 all-MiniLM-L6-v2 默认行为一致）。
+    """
+
+    def __init__(self, model_path: str, batch_size: int = 32, max_length: int = 512):
+        self.model_path = model_path
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self._model = None
+        self._tokenizer = None
+
+    def _load(self):
+        if self._model is None:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+            logger.info("从本地路径加载 Embedding 模型: %s", self.model_path)
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            self._model = AutoModel.from_pretrained(self.model_path)
+            self._model.eval()
+            dim = self._model.config.hidden_size
+            logger.info("本地模型加载完成, dim=%s", dim)
+
+    def __call__(self, input: Documents) -> list[list[float]]:
+        import torch
+        import torch.nn.functional as F
+        self._load()
+
+        texts = list(input)
+        all_embeddings = []
+
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i:i + self.batch_size]
+            encoded = self._tokenizer(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+            with torch.no_grad():
+                outputs = self._model(**encoded)
+                # Mean pooling: 考虑 attention mask
+                mask = encoded["attention_mask"].unsqueeze(-1).float()
+                token_emb = outputs.last_hidden_state
+                pooled = torch.sum(token_emb * mask, dim=1) / torch.clamp(mask.sum(dim=1), min=1e-9)
+                # L2 归一化
+                pooled = F.normalize(pooled, p=2, dim=1)
+                all_embeddings.extend(pooled.tolist())
+
+        return all_embeddings
+
+
 class RemoteEmbeddingFunction(EmbeddingFunction):
     def __init__(self, api_base="", api_key="", model="BAAI/bge-m3", max_retries=3, batch_size=32):
         self.api_base = (api_base or settings.EMBEDDING_API_BASE).rstrip("/")
@@ -156,11 +212,11 @@ class VectorStoreService:
                 model_path = settings.EMBEDDING_MODEL
                 logger.info("local embedding: %s", model_path)
                 
-                # 如果是本地目录，使用自定义加载（绕过 HuggingFace repo 验证）
+                # 如果是本地目录，使用 transformers 直接加载（绕过 HF repo 验证）
                 if os.path.isdir(model_path):
                     logger.info("从本地路径加载模型: %s", model_path)
-                    return M3eEmbeddingFunction(
-                        model_name=model_path,
+                    return LocalTransformerEmbeddingFunction(
+                        model_path=model_path,
                         batch_size=settings.EMBEDDING_BATCH_SIZE,
                     )
                 
