@@ -25,7 +25,7 @@ class Conversation(BaseModel):
 # ═══════════════════════════════════════════
 
 class MessageCreate(BaseModel):
-    conversation_id: str = ""  # v4.5: 改为可选，避免前端未传时 422
+    conversation_id: Optional[str] = ""  # v4.5: 改为可选，避免前端未传或传 null 时 422
     content: str = Field(..., min_length=1, max_length=10000)
     library: Optional[str] = None  # v4.0: 库过滤
     history: list[dict] = Field(default_factory=list)  # v4.1: 多轮对话历史
